@@ -137,6 +137,7 @@ export class GameRoom {
     if (this.players.size >= MIN_PLAYERS) return this.begin();
     this.status = "cancelled";
     await this.deps.messenger.sendGroup(this.chatId, this.t.cancelled(MIN_PLAYERS));
+    this.deps.narrator.finish?.();
     this.deps.onClosed(this);
   }
 
@@ -291,6 +292,7 @@ export class GameRoom {
     this.cancelTimer?.();
     const roster = this.state!.seats.map((id) => ({ name: this.name(id), role: ended.roles[id]! }));
     await this.deps.messenger.sendGroup(this.chatId, await this.deps.narrator.gameOver(ended.winner, roster));
+    this.deps.narrator.finish?.();
     this.deps.onClosed(this);
     return true;
   }
