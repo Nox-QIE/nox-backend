@@ -1,0 +1,18 @@
+# deps & build
+node_modules/
+dist/
+build/
+coverage/
+.turbo/
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/
+
+# env & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
