@@ -20,6 +20,15 @@ export interface FinalizePayload extends GameSecret {
   winner: number;
 }
 
+export interface FinishedGame {
+  id: number;
+  agentId: number | null;
+  players: number;
+  hostId: number;
+  chainGameId: Hex | null;
+  endedAt: number;
+}
+
 export interface GameRecord {
   gameId: Hex;
   chatId: number;
@@ -43,8 +52,9 @@ export interface Store {
   listAgents(activeOnly?: boolean): AgentRecord[];
   setAgentStatus(id: number, status: AgentRecord["status"]): void;
   setChainAgentId(id: number, chainAgentId: number): void;
-  /** One finished game narrated by an agent: the input for monthly revenue settlement. */
-  recordAgentUsage(agentId: number, players: number, chainGameId: Hex | null): void;
+  /** Every finished game (agentId null = Nox's own GM): the input for monthly agent revenue settlement. */
+  recordFinishedGame(g: { agentId: number | null; players: number; hostId: number; chainGameId: Hex | null }): void;
+  finishedGames(fromMs: number, toMs: number): FinishedGame[];
   agentUsage(fromMs: number, toMs: number): { agentId: number; games: number; players: number }[];
 }
 
@@ -78,10 +88,11 @@ export class SqliteStore implements Store {
         chain_agent_id INTEGER,
         created_at INTEGER NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS agent_usage (
+      CREATE TABLE IF NOT EXISTS finished_games (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        agent_id INTEGER NOT NULL,
+        agent_id INTEGER,
         players INTEGER NOT NULL,
+        host_id INTEGER NOT NULL,
         chain_game_id TEXT,
         ended_at INTEGER NOT NULL
       );
@@ -188,16 +199,24 @@ export class SqliteStore implements Store {
     this.db.prepare("UPDATE agents SET chain_agent_id = ? WHERE id = ?").run(chainAgentId, id);
   }
 
-  recordAgentUsage(agentId: number, players: number, chainGameId: Hex | null) {
+  recordFinishedGame(g: { agentId: number | null; players: number; hostId: number; chainGameId: Hex | null }) {
     this.db
-      .prepare("INSERT INTO agent_usage (agent_id, players, chain_game_id, ended_at) VALUES (?, ?, ?, ?)")
-      .run(agentId, players, chainGameId, Date.now());
+      .prepare("INSERT INTO finished_games (agent_id, players, host_id, chain_game_id, ended_at) VALUES (?, ?, ?, ?, ?)")
+      .run(g.agentId, g.players, g.hostId, g.chainGameId, Date.now());
+  }
+
+  finishedGames(fromMs: number, toMs: number): FinishedGame[] {
+    return this.db
+      .prepare(
+        "SELECT id, agent_id AS agentId, players, host_id AS hostId, chain_game_id AS chainGameId, ended_at AS endedAt FROM finished_games WHERE ended_at >= ? AND ended_at < ? ORDER BY id",
+      )
+      .all(fromMs, toMs) as unknown as FinishedGame[];
   }
 
   agentUsage(fromMs: number, toMs: number) {
     return this.db
       .prepare(
-        "SELECT agent_id AS agentId, COUNT(*) AS games, SUM(players) AS players FROM agent_usage WHERE ended_at >= ? AND ended_at < ? GROUP BY agent_id ORDER BY agent_id",
+        "SELECT agent_id AS agentId, COUNT(*) AS games, SUM(players) AS players FROM finished_games WHERE agent_id IS NOT NULL AND ended_at >= ? AND ended_at < ? GROUP BY agent_id ORDER BY agent_id",
       )
       .all(fromMs, toMs) as { agentId: number; games: number; players: number }[];
   }

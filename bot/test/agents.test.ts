@@ -93,6 +93,7 @@ describe("agent picker in the lobby", () => {
     for (const u of [11, 22, 33, 44, 55]) await room.vote(u, 1, String(wolf));
     expect(room.status).toBe("ended");
     expect(store.agentUsage(0, Date.now() + 1)).toEqual([{ agentId: id, games: 1, players: 5 }]);
+    expect(store.finishedGames(0, Date.now() + 1)[0]).toMatchObject({ agentId: id, players: 5, hostId: 11 });
   });
 
   it("falls back to Nox's own GM when the picked agent is suspended before the start", async () => {
