@@ -86,7 +86,8 @@ Default `NOX_CHAIN=off`: game jalan tanpa chain. Dengan `NOX_CHAIN=testnet|mainn
 - Saat game mulai: `createGame` → tiap pemain `joinGame` dari wallet-nya sendiri → `commitRoles` (Merkle root peran). Tiap pemain menerima kode `salt` di DM untuk membuktikan perannya.
 - Aksi malam → `commitNightAction` (hash + nonce rahasia), vote → `castVote`, akhir siang → `recordRound`, akhir game → `revealAndFinalize` (semua peran & aksi diverifikasi kontrak, credits di-mint).
 - Wallet pemain diturunkan dari `NOX_WALLET_SECRET` (tanpa database kunci); operator mengisi gas otomatis (gas drip). Detail: [ADR-002](../docs/adr/ADR-002-chain-integration.md).
-- Game tidak pernah menunggu chain; error chain dicatat sebagai `chain_error` dan game tetap jalan.
+- Game tidak pernah menunggu chain; error chain dicatat sebagai `chain_error`, game tetap jalan, dan game itu otomatis di-cancel on-chain.
+- Rahasia game (salt, proof, nonce) disimpan di SQLite (`NOX_DB_PATH`, default `data/nox.db`), terenkripsi AES-256-GCM dengan kunci turunan `NOX_WALLET_SECRET`. Saat bot start, game yang belum selesai di chain dibereskan: yang sudah berakhir di-finalize ulang, yang masih berjalan di-cancel dan grupnya diberi tahu.
 - Setelah kontrak berubah: `(cd ../nox-contracts && forge build) && node --import tsx bot/scripts/sync-contracts.ts`.
 
 ## Tes
@@ -97,6 +98,6 @@ npm test
 
 Tes memakai `FakeMessenger` + `FakeScheduler` + `FakeModel`; `chain.e2e.test.ts` men-deploy kontrak asli ke anvil dan memainkan satu game penuh (dilewati bila anvil tidak terpasang), termasuk satu game penuh 5 pemain sampai menang, replay log, guard, fallback, dan server HTTP lokal yang meniru Oxion.
 
-## Belum (M1)
+## Belum
 
-State masih di memori (restart = game hilang, user perlu `/start` ulang). Postgres/Redis dan commit-reveal on-chain menyusul. GM belum membaca chat grup (pancingan diskusi F07-S02) dan belum punya tema (F09-S08).
+Game yang sedang berjalan tidak dilanjutkan setelah restart (di-cancel bersih). Postgres/Redis dan commit-reveal on-chain menyusul. GM belum membaca chat grup (pancingan diskusi F07-S02) dan belum punya tema (F09-S08).

@@ -34,6 +34,8 @@ export interface ChainConfig {
 
 export interface Config {
   botToken: string;
+  /** SQLite file for started users and encrypted game secrets. */
+  dbPath: string;
   timings: Timings;
   gm: GmConfig;
   chain: ChainConfig;
@@ -52,6 +54,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (!botToken) throw new Error("BOT_TOKEN is not set (get one from @BotFather)");
   return {
     botToken,
+    dbPath: env.NOX_DB_PATH || "data/nox.db",
     timings: {
       lobbyMs: seconds(env, "LOBBY_SECONDS", DEFAULT_TIMINGS.lobbyMs),
       nightMs: seconds(env, "NIGHT_SECONDS", DEFAULT_TIMINGS.nightMs),

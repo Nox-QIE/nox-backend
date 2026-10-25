@@ -41,6 +41,8 @@ export interface ViemLedgerOptions {
   dripAmount: bigint;
   /** How often to poll for receipts (ms). Default 1000. */
   pollingMs?: number;
+  /** Called once a game is finalized or cancelled on-chain (to mark it settled in the store). */
+  onSettled?: (gameId: Hex, outcome: "finalized" | "cancelled") => void;
   log?: (line: Record<string, unknown>) => void;
 }
 
@@ -91,6 +93,11 @@ export class ViemLedger implements GameLedger {
     return this.failed.has(gameId);
   }
 
+  async statusOf(gameId: Hex): Promise<number> {
+    const g = await this.publicClient.readContract({ address: this.o.gameAddress, abi: NoxGameAbi, functionName: "games", args: [gameId] });
+    return Number(g[0]);
+  }
+
   // ------------------------------------------------------------ GameLedger
 
   startGame(gameId: Hex, configHash: Hex, players: number[], rolesRoot: Hex) {
@@ -126,11 +133,16 @@ export class ViemLedger implements GameLedger {
       }));
       await this.asOperator("revealAndFinalize", [gameId, r, n, resultHash, winner]);
       this.gameQueues.delete(gameId);
+      this.o.onSettled?.(gameId, "finalized");
     });
   }
 
   cancel(gameId: Hex, reason: string) {
-    this.enqueue(gameId, "cancel", () => this.asOperator("cancelGame", [gameId, reason]));
+    this.enqueue(gameId, "cancel", async () => {
+      await this.asOperator("cancelGame", [gameId, reason]);
+      this.gameQueues.delete(gameId);
+      this.o.onSettled?.(gameId, "cancelled");
+    });
   }
 
   // ------------------------------------------------------------ internals
@@ -140,12 +152,16 @@ export class ViemLedger implements GameLedger {
     if (!q) this.gameQueues.set(gameId, (q = new SerialQueue()));
     const p = q
       .run(async () => {
-        if (this.failed.has(gameId)) return;
+        // After a failure only a cancel may still run, so the game does not stay "Running" forever.
+        if (this.failed.has(gameId) && step !== "cancel") return;
         try {
           await job();
         } catch (e) {
+          const first = !this.failed.has(gameId);
           this.failed.add(gameId);
           this.o.log?.({ event: "chain_error", gameId, step, error: e instanceof Error ? e.message.split("\n")[0] : String(e) });
+          // A failed finalize keeps its record for the boot-time retry; any other failure cancels the game.
+          if (first && step !== "finalize" && step !== "cancel") this.cancel(gameId, `chain error at ${step}`);
         }
       })
       .finally(() => this.pending.delete(p));

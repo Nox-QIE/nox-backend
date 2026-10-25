@@ -6,6 +6,8 @@ import { noLedger, type GameLedger } from "./chain/ledger.js";
 import { qieMainnet, qieTestnet, ViemLedger } from "./chain/viem-ledger.js";
 import { PlayerWallets } from "./chain/wallets.js";
 import type { ChainConfig, Config, GmConfig } from "./config.js";
+import { recoverGames } from "./recovery.js";
+import { SqliteStore, storeKey, type Store } from "./store.js";
 import { createGmModel } from "./gm/model.js";
 import { GmModelPool } from "./gm/pool.js";
 import { LlmNarrator } from "./gm/llm-narrator.js";
@@ -84,7 +86,9 @@ const anvil = defineChain({
   rpcUrls: { default: { http: ["http://127.0.0.1:8545"] } },
 });
 
-export function buildLedger(c: ChainConfig, log = (l: Record<string, unknown>) => console.log(JSON.stringify(l))): GameLedger {
+const logLine = (l: Record<string, unknown>) => console.log(JSON.stringify(l));
+
+export function buildLedger(c: ChainConfig, log = logLine, store?: Store): GameLedger {
   if (c.network === "off") return noLedger;
   return new ViemLedger({
     chain: c.network === "mainnet" ? qieMainnet : c.network === "testnet" ? qieTestnet : anvil,
@@ -95,26 +99,32 @@ export function buildLedger(c: ChainConfig, log = (l: Record<string, unknown>) =
     minBalance: c.minWei,
     dripAmount: c.dripWei,
     log,
+    ...(store ? { onSettled: (gameId, outcome) => store.setStatus(gameId, outcome) } : {}),
   });
 }
 
 /** Wire Telegram updates to the registry. Nox stays a regular bot: no Mini App / Web App buttons. */
-export async function createNoxBot({ botToken, timings, gm, chain }: Config) {
+export async function createNoxBot({ botToken, dbPath, timings, gm, chain }: Config) {
   const bot = new Bot(botToken);
   await bot.init();
+  const messenger = telegramMessenger(bot);
+  const store = new SqliteStore(dbPath, chain.walletSecret ? storeKey(chain.walletSecret) : null);
+  const ledger = buildLedger(chain, logLine, store);
   const registry = new Registry({
-    messenger: telegramMessenger(bot),
+    messenger,
     scheduler: realScheduler,
     timings,
     randomInt: (max) => randomInt(max),
     botUsername: bot.botInfo.username,
     narratorFor: narratorFactory(gm),
-    ledger: buildLedger(chain),
+    ledger,
+    store,
   });
+  await recoverGames(store, ledger, messenger, logLine);
 
   bot.command("start", async (ctx) => {
     if (ctx.chat.type !== "private" || !ctx.from) return;
-    registry.startedUsers.add(ctx.from.id);
+    registry.markStarted(ctx.from.id);
     await ctx.reply(T[langFrom(ctx.from.language_code)].welcome, { parse_mode: "HTML" });
   });
 
@@ -144,7 +154,7 @@ export async function createNoxBot({ botToken, timings, gm, chain }: Config) {
 
   bot.on("message:text", async (ctx) => {
     if (ctx.chat.type !== "private") return;
-    registry.startedUsers.add(ctx.from.id);
+    registry.markStarted(ctx.from.id);
     const room = registry.roomOfUser(ctx.from.id);
     if (room) await room.wolfChat(ctx.from.id, ctx.message.text);
   });
