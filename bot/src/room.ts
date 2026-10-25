@@ -36,6 +36,8 @@ export interface RoomDeps {
   ledger?: GameLedger;
   /** Durable store for game secrets, so a game can still be revealed or cancelled after a restart. */
   store?: Store;
+  /** Public dashboard (nox-frontend). When set, the game-over message links to the game's proof page. */
+  webUrl?: string;
 }
 
 export interface Reply {
@@ -352,7 +354,9 @@ export class GameRoom {
       this.ledger.finalize(this.gameId, payload.roles, payload.nights, payload.resultHash, payload.winner);
     }
     const roster = this.state!.seats.map((id) => ({ name: this.name(id), role: ended.roles[id]! }));
-    await this.deps.messenger.sendGroup(this.chatId, await this.deps.narrator.gameOver(ended.winner, roster));
+    let over = await this.deps.narrator.gameOver(ended.winner, roster);
+    if (this.gameId && this.deps.webUrl) over += `\n\n${this.t.verifyLink(`${this.deps.webUrl.replace(/\/+$/, "")}/game/?id=${this.gameId}`)}`;
+    await this.deps.messenger.sendGroup(this.chatId, over);
     this.deps.narrator.finish?.();
     this.deps.onClosed(this);
     return true;

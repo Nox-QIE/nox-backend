@@ -104,7 +104,7 @@ export function buildLedger(c: ChainConfig, log = logLine, store?: Store): GameL
 }
 
 /** Wire Telegram updates to the registry. Nox stays a regular bot: no Mini App / Web App buttons. */
-export async function createNoxBot({ botToken, dbPath, timings, gm, chain }: Config) {
+export async function createNoxBot({ botToken, dbPath, webUrl, timings, gm, chain }: Config) {
   const bot = new Bot(botToken);
   await bot.init();
   const messenger = telegramMessenger(bot);
@@ -119,6 +119,7 @@ export async function createNoxBot({ botToken, dbPath, timings, gm, chain }: Con
     narratorFor: narratorFactory(gm),
     ledger,
     store,
+    ...(webUrl ? { webUrl } : {}),
   });
   await recoverGames(store, ledger, messenger, logLine);
 
