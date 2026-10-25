@@ -11,6 +11,8 @@ export interface Narrator {
   morning(view: PublicView, eliminated: string | null, revealedRole: Role | null): Promise<string>;
   dayResult(view: PublicView, eliminated: string | null, revealedRole: Role | null): Promise<string>;
   gameOver(winner: Team, roster: { name: string; role: Role }[]): Promise<string>;
+  /** Called once when the game ends or is cancelled (e.g. to report LLM usage). */
+  finish?(): void;
 }
 
 export class TemplateNarrator implements Narrator {

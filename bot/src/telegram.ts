@@ -1,8 +1,11 @@
 import { Bot, GrammyError, InlineKeyboard } from "grammy";
 import { randomInt } from "node:crypto";
 import { langFrom, T } from "./i18n.js";
-import { TemplateNarrator } from "./narrator.js";
-import { realScheduler, type Keyboard, type Messenger, type Timings } from "./ports.js";
+import type { Config, GmConfig } from "./config.js";
+import { createGmModel } from "./gm/model.js";
+import { LlmNarrator } from "./gm/llm-narrator.js";
+import { TemplateNarrator, type Narrator } from "./narrator.js";
+import { realScheduler, type Keyboard, type Messenger } from "./ports.js";
 import { Registry } from "./registry.js";
 
 function opts(keyboard?: Keyboard) {
@@ -47,9 +50,16 @@ export const displayName = (u: { first_name: string; last_name?: string; usernam
 
 const stripTags = (html: string) => html.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 
+export function narratorFactory(gm: GmConfig): (lang: "id" | "en") => Narrator {
+  if (gm.mode === "template") return (lang) => new TemplateNarrator(lang);
+  const model = createGmModel(gm);
+  const log = (line: Record<string, unknown>) => console.log(JSON.stringify(line));
+  return (lang) => new LlmNarrator({ model, lang, timeoutMs: gm.timeoutMs, log, ...(gm.price ? { price: gm.price } : {}) });
+}
+
 /** Wire Telegram updates to the registry. Nox stays a regular bot: no Mini App / Web App buttons. */
-export async function createNoxBot(token: string, timings: Timings) {
-  const bot = new Bot(token);
+export async function createNoxBot({ botToken, timings, gm }: Config) {
+  const bot = new Bot(botToken);
   await bot.init();
   const registry = new Registry({
     messenger: telegramMessenger(bot),
@@ -57,7 +67,7 @@ export async function createNoxBot(token: string, timings: Timings) {
     timings,
     randomInt: (max) => randomInt(max),
     botUsername: bot.botInfo.username,
-    narratorFor: (lang) => new TemplateNarrator(lang),
+    narratorFor: narratorFactory(gm),
   });
 
   bot.command("start", async (ctx) => {

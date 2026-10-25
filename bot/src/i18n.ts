@@ -5,6 +5,7 @@ export type Lang = "id" | "en";
 export const langFrom = (code: string | undefined): Lang => (code?.toLowerCase().startsWith("id") ? "id" : "en");
 
 export const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+export const unesc = (s: string) => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 
 const ROLE: Record<Lang, Record<Role, string>> = {
   id: { werewolf: "🐺 Werewolf", seer: "🔮 Seer", doctor: "🩺 Doctor", villager: "🧑‍🌾 Warga" },
