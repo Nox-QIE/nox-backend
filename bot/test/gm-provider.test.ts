@@ -2,7 +2,7 @@ import { createServer, type IncomingHttpHeaders } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadGmConfig } from "../src/config.js";
-import { createGmModel } from "../src/gm/model.js";
+import { costUsd, createGmModel } from "../src/gm/model.js";
 
 let seen: { url: string; headers: IncomingHttpHeaders; body: Record<string, unknown> }[] = [];
 let reply: Record<string, unknown> = {};
@@ -54,10 +54,25 @@ describe("Oxion provider", () => {
     expect(Object.keys(req.body).sort()).toEqual(["max_tokens", "messages", "model", "system"]);
   });
 
+  it("accepts a base URL ending in /v1, as Oxion's docs write it", async () => {
+    seen = [];
+    reply = message("ok");
+    const m = createGmModel({ provider: "oxion", model: "claude-opus-5.5", baseURL: `${base}/v1/`, authToken: "cc_test" });
+    await m.complete("sys", "user", 2000);
+    expect(seen[0]!.url).toBe("/v1/messages");
+  });
+
   it("treats a refusal as a failure so the narrator falls back", async () => {
     reply = message("", "refusal");
     const m = createGmModel({ provider: "oxion", model: "claude-opus-5-5", baseURL: base, authToken: "cc_test" });
     await expect(m.complete("sys", "user", 2000)).rejects.toThrow("refusal");
+  });
+});
+
+describe("pricing", () => {
+  it("prices dotted gateway model IDs like the Claude API ones", () => {
+    const u = { inputTokens: 1e6, outputTokens: 1e6, cacheReadTokens: 0, cacheWriteTokens: 0 };
+    expect(costUsd("claude-opus-5.5", u)).toBe(24);
   });
 });
 
