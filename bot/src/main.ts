@@ -7,6 +7,8 @@ const { bot } = await createNoxBot(config);
 await bot.api.setMyCommands([
   { command: "newgame", description: "Open a Nox lobby (optional theme: horror, fantasy, office)" },
   { command: "start", description: "Enable DMs so you can receive your secret role" },
+  { command: "privacy", description: "What Nox stores and what goes on-chain" },
+  { command: "forget", description: "Delete your off-chain data (in a private chat with the bot)" },
 ]);
 
 const stop = () => void bot.stop();

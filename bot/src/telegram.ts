@@ -130,6 +130,18 @@ export async function createNoxBot({ botToken, dbPath, webUrl, timings, gm, chai
     await ctx.reply(T[langFrom(ctx.from.language_code)].welcome, { parse_mode: "HTML" });
   });
 
+  bot.command(["privacy", "privasi"], async (ctx) => {
+    if (!ctx.from) return;
+    const url = webUrl ? `${webUrl.replace(/\/+$/, "")}/privacy/` : null;
+    await ctx.reply(T[langFrom(ctx.from.language_code)].privacy(url), { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
+  });
+
+  bot.command(["forget", "lupakan"], async (ctx) => {
+    if (ctx.chat.type !== "private" || !ctx.from) return;
+    const t = T[langFrom(ctx.from.language_code)];
+    await ctx.reply(t.forgetAsk, { reply_markup: new InlineKeyboard().text(t.forgetBtn, "f:yes") });
+  });
+
   bot.command("newgame", async (ctx) => {
     if (!ctx.from) return;
     const lang = langFrom(ctx.from.language_code);
@@ -143,6 +155,13 @@ export async function createNoxBot({ botToken, dbPath, webUrl, timings, gm, chai
   // Callback data: j:<room> | s:<room> | a:<room>:<agentId> | n:<room>:<round>:<target> | v:<room>:<round>:<target>
   bot.on("callback_query:data", async (ctx) => {
     const [kind, roomId, roundStr, target] = ctx.callbackQuery.data.split(":");
+    if (kind === "f") {
+      const t = T[langFrom(ctx.from.language_code)];
+      const done = registry.forgetUser(ctx.from.id);
+      await ctx.answerCallbackQuery({ text: done ? t.forgetDone : t.forgetBusy });
+      if (done) await ctx.editMessageText(t.forgetDone).catch(() => undefined);
+      return;
+    }
     const room = roomId ? registry.get(roomId) : undefined;
     const user = ctx.from;
     const round = Number(roundStr);

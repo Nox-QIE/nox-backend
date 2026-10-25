@@ -58,3 +58,27 @@ describe("SqliteStore", () => {
     expect(() => s.saveGame("0x01", -1, "en", secret)).toThrow("encryption key");
   });
 });
+
+describe("privacy", () => {
+  it("forgets a user and unlinks them as host without losing the per-host count", () => {
+    const s = new SqliteStore(":memory:");
+    s.addStartedUser(42);
+    s.addStartedUser(43);
+    s.recordFinishedGame({ agentId: null, players: 5, hostId: 42, chainGameId: null });
+    s.recordFinishedGame({ agentId: null, players: 5, hostId: 42, chainGameId: null });
+    s.forgetUser(42);
+    expect(s.startedUsers()).toEqual([43]);
+    const games = s.finishedGames(0, Date.now() + 1);
+    expect(games.map((g) => g.hostId)).toEqual([-42, -42]);
+  });
+
+  it("purges secrets of games settled before the cutoff, never unsettled ones", () => {
+    const s = new SqliteStore(":memory:", storeKey(SECRET));
+    s.saveGame("0x01", -1, "en", secret);
+    s.saveGame("0x02", -1, "en", secret);
+    s.setStatus("0x01", "finalized");
+    expect(s.purgeSettledSecrets(Date.now() - 1000)).toBe(0); // settled just now: kept
+    expect(s.purgeSettledSecrets(Date.now() + 1000)).toBe(1);
+    expect(s.unsettledGames().map((g) => g.gameId)).toEqual(["0x02"]);
+  });
+});

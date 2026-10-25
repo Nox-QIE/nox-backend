@@ -39,6 +39,11 @@ type Dict = {
   yourRole: (role: string, wolves: string[]) => string;
   roleProof: (salt: string) => string;
   restartCancelled: string;
+  privacy: (url: string | null) => string;
+  forgetAsk: string;
+  forgetBtn: string;
+  forgetDone: string;
+  forgetBusy: string;
   gmLine: (name: string) => string;
   gmDefault: string;
   gmPicked: (name: string) => string;
@@ -84,6 +89,12 @@ export const T: Record<Lang, Dict> = {
     gmLine: (n) => `🎙 Game Master: ${n}. Host bisa memilih lewat tombol di bawah.`,
     gmDefault: "🌙 Nox (bawaan)",
     gmPicked: (n) => `Game Master: ${n}`,
+    privacy: (url) =>
+      `🔒 <b>Privasi di Nox</b>\n• Disimpan: ID Telegram-mu (agar bot bisa mengirim DM) dan data game terenkripsi sampai game selesai di blockchain, lalu dihapus dalam 30 hari.\n• Nama tampilanmu hanya dipakai selama game; nama pemain yang tersingkir dan daftar akhir dikirim ke penyedia AI untuk narasi.\n• Di blockchain QIE (publik & permanen): alamat wallet game-mu, gabung, vote, hash aksi malam, dan peran yang dibuka di akhir.\n• Obrolan werewolf diteruskan, tidak disimpan.\n• /lupakan menghapus data off-chain milikmu.` + (url ? `\n\nSelengkapnya: ${url}` : ""),
+    forgetAsk: "Hapus data off-chain milikmu dari Nox (ID Telegram dan kaitanmu sebagai host)? Data di blockchain tidak bisa dihapus. Kamu perlu menekan Start lagi untuk bermain.",
+    forgetBtn: "Ya, hapus dataku",
+    forgetDone: "Data off-chain milikmu sudah dihapus.",
+    forgetBusy: "Kamu sedang ikut game. Coba lagi setelah game selesai.",
     pickKill: "🌙 Pilih korban malam ini:",
     pickInspect: "🌙 Pilih pemain yang ingin kamu selidiki:",
     pickProtect: "🌙 Pilih pemain yang ingin kamu lindungi:",
@@ -123,6 +134,12 @@ export const T: Record<Lang, Dict> = {
     gmLine: (n) => `🎙 Game Master: ${n}. The host can switch with the buttons below.`,
     gmDefault: "🌙 Nox (default)",
     gmPicked: (n) => `Game Master: ${n}`,
+    privacy: (url) =>
+      `🔒 <b>Privacy at Nox</b>\n• Stored: your Telegram ID (so the bot can DM you) and encrypted game data until the game is settled on-chain, then deleted within 30 days.\n• Your display name is only used during a game; names of eliminated players and the final roster are sent to the AI provider for narration.\n• On the QIE blockchain (public and permanent): your game wallet address, joins, votes, night action hashes, and roles revealed at the end.\n• Werewolf chat is relayed, not stored.\n• /forget deletes your off-chain data.` + (url ? `\n\nFull policy: ${url}` : ""),
+    forgetAsk: "Delete your off-chain data from Nox (your Telegram ID and your link as a host)? Blockchain data cannot be deleted. You will need to press Start again to play.",
+    forgetBtn: "Yes, delete my data",
+    forgetDone: "Your off-chain data has been deleted.",
+    forgetBusy: "You are in a game. Try again after it ends.",
     pickKill: "🌙 Choose tonight's victim:",
     pickInspect: "🌙 Choose a player to investigate:",
     pickProtect: "🌙 Choose a player to protect:",

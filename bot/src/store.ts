@@ -47,6 +47,10 @@ export interface Store {
   setStatus(gameId: Hex, status: "finalized" | "cancelled"): void;
   /** Games whose on-chain record is not settled yet (running or ended, not finalized/cancelled). */
   unsettledGames(): GameRecord[];
+  /** Delete secrets of games settled before `beforeMs` (their roles are public on-chain by then). */
+  purgeSettledSecrets(beforeMs: number): number;
+  /** Right to erasure for off-chain data: forget a player who pressed Start and unlink them as host. */
+  forgetUser(userId: number): void;
   addAgent(owner: string, persona: Persona): number;
   getAgent(id: number): AgentRecord | null;
   listAgents(activeOnly?: boolean): AgentRecord[];
@@ -154,6 +158,16 @@ export class SqliteStore implements Store {
 
   setStatus(gameId: Hex, status: "finalized" | "cancelled") {
     this.db.prepare("UPDATE games SET status = ?, updated_at = ? WHERE game_id = ?").run(status, Date.now(), gameId);
+  }
+
+  purgeSettledSecrets(beforeMs: number): number {
+    return Number(this.db.prepare("DELETE FROM games WHERE status IN ('finalized', 'cancelled') AND updated_at < ?").run(beforeMs).changes);
+  }
+
+  forgetUser(userId: number) {
+    this.db.prepare("DELETE FROM users WHERE telegram_id = ?").run(userId);
+    // Settlement only needs to know that one host ran several games, not who: keep a stable stand-in.
+    this.db.prepare("UPDATE finished_games SET host_id = -abs(host_id) WHERE host_id = ?").run(userId);
   }
 
   unsettledGames(): GameRecord[] {
