@@ -5,8 +5,9 @@
  *   node --env-file=.env --import tsx bot/scripts/gm-discover.ts            # writes .env
  *   node --env-file=.env --import tsx bot/scripts/gm-discover.ts --dry-run  # only prints
  */
+import Anthropic from "@anthropic-ai/sdk";
 import { readFileSync, writeFileSync } from "node:fs";
-import { DEFAULT_SELECT, fetchAnthropicModelIds, fetchOxionModelIds, rankCandidates, setEnvLine, type Candidate } from "../src/gm/discover.js";
+import { DEFAULT_SELECT, fetchAnthropicModelIds, fetchOxionModelIds, finalizePool, rankCandidates, setEnvLine, type ProbeResult } from "../src/gm/discover.js";
 import { checkNarration } from "../src/gm/guard.js";
 import { createGmModel } from "../src/gm/model.js";
 import { systemPrompt, userPrompt } from "../src/gm/prompt.js";
@@ -35,10 +36,13 @@ console.log(`kandidat: ${ranked.length}, target: ${total}\n`);
 
 const system = systemPrompt("id");
 const user = userPrompt({ kind: "nightFalls", round: 1, alive: 5 });
-const picked: Candidate[] = [];
+const results = new Map<string, ProbeResult>();
+let okAnthropic = 0;
+let okTotal = 0;
 
 for (const c of ranked) {
-  if (picked.length >= total) break;
+  if (okTotal >= total) break;
+  if (c.provider === "anthropic" && okAnthropic >= DEFAULT_SELECT.anthropicMax) continue;
   const label = `${c.provider}:${c.id}`;
   const t0 = Date.now();
   try {
@@ -47,18 +51,32 @@ for (const c of ranked) {
     const g = checkNarration(r.text, []);
     const ms = Date.now() - t0;
     if (g.ok) {
-      picked.push(c);
+      results.set(label, "ok");
+      okTotal++;
+      if (c.provider === "anthropic") okAnthropic++;
       console.log(`OK    ${label}  ${ms} ms  "${g.text.slice(0, 70)}"`);
     } else {
+      results.set(label, "fail");
       console.log(`TOLAK ${label}  guard: ${g.reason}`);
     }
   } catch (e) {
+    // 5xx or no response = provider outage. 401/403 also counts as an outage here: the same key just
+    // listed this provider's models, so the gateway is misbehaving, not the key. Other 4xx = this model
+    // does not work on this endpoint.
+    const status = e instanceof Anthropic.APIError ? e.status : undefined;
+    const outage = status === undefined || status >= 500 || status === 401 || status === 403;
+    results.set(label, outage ? "outage" : "fail");
     console.log(`GAGAL ${label}  ${e instanceof Error ? e.message.split("\n")[0]!.slice(0, 100) : String(e)}`);
   }
 }
 
+const { picked, unverified } = finalizePool(ranked, results, total, DEFAULT_SELECT.anthropicMax);
 const value = picked.map((c) => `${c.provider}:${c.id}`).join(",");
 console.log(`\nTerpilih ${picked.length}/${total}:\nNOX_GM_MODELS=${value}`);
+if (unverified.length) {
+  console.log(`\nBelum dites (provider sedang down, akan dipakai lewat failover): ${unverified.map((c) => `${c.provider}:${c.id}`).join(", ")}`);
+  console.log("Jalankan ulang skrip ini setelah provider pulih untuk memverifikasi.");
+}
 
 if (!picked.length) {
   console.log("\nTidak ada model yang lolos; .env tidak diubah.");

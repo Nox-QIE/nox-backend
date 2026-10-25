@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { familyOf, rankCandidates, setEnvLine, versionOf } from "../src/gm/discover.js";
+import { familyOf, finalizePool, rankCandidates, setEnvLine, versionOf, type ProbeResult } from "../src/gm/discover.js";
 
 // GET https://oxionai.com/v1/models, 25 Oct 2026.
 const OXION = [
@@ -59,5 +59,48 @@ describe("model discovery", () => {
     const env = "OXION_API_KEY=cc_secret\nNOX_GM_MODELS=old\nBOT_TOKEN=x\n";
     expect(setEnvLine(env, "NOX_GM_MODELS", "a,b")).toBe("OXION_API_KEY=cc_secret\nNOX_GM_MODELS=a,b\nBOT_TOKEN=x\n");
     expect(setEnvLine("A=1", "NOX_GM_MODELS", "a")).toBe("A=1\nNOX_GM_MODELS=a\n");
+  });
+});
+
+describe("finalizePool", () => {
+  const ranked = rankCandidates(ANTHROPIC, OXION);
+  const all = (r: ProbeResult, provider?: string) =>
+    new Map(ranked.filter((c) => !provider || c.provider === provider).map((c) => [label(c), r] as [string, ProbeResult]));
+
+  it("keeps 3 Claude API + 7 gateway models when everything answers", () => {
+    const { picked, unverified } = finalizePool(ranked, all("ok"), 10, 3);
+    expect(picked.filter((c) => c.provider === "anthropic")).toHaveLength(3);
+    expect(picked).toHaveLength(10);
+    expect(unverified).toHaveLength(0);
+  });
+
+  it("keeps the gateway's share, unverified, while it is down", () => {
+    const results = new Map([...all("ok", "anthropic"), ...all("outage", "oxion")]);
+    const { picked, unverified } = finalizePool(ranked, results, 10, 3);
+    expect(picked.filter((c) => c.provider === "anthropic").map(label)).toEqual([
+      "anthropic:claude-opus-5-5",
+      "anthropic:claude-sonnet-5-5",
+      "anthropic:claude-haiku-5-5",
+    ]);
+    expect(unverified.map(label).slice(0, 2)).toEqual(["oxion:gpt-5.6-luna", "oxion:gemini-3.7-flash"]);
+    expect(picked).toHaveLength(10);
+    expect(new Set(unverified.map((c) => familyOf(c.id))).size).toBe(unverified.length); // one per family
+  });
+
+  it("still treats the gateway as down when a few probes return a stray 401", () => {
+    const results = new Map([...all("ok", "anthropic"), ...all("outage", "oxion"), ["oxion:kimi-k3", "fail" as ProbeResult]]);
+    const { picked, unverified } = finalizePool(ranked, results, 10, 3);
+    expect(picked).toHaveLength(10);
+    expect(unverified.map(label)).not.toContain("oxion:kimi-k3");
+  });
+
+  it("does not keep a provider whose probes all fail with client errors", () => {
+    const results = new Map([...all("ok", "anthropic"), ...all("fail", "oxion")]);
+    expect(finalizePool(ranked, results, 10, 3).picked).toHaveLength(3);
+  });
+
+  it("drops models that fail with a client error instead of keeping them", () => {
+    const results = new Map([...all("ok"), ["oxion:gpt-5.6-luna", "fail" as ProbeResult]]);
+    expect(finalizePool(ranked, results, 10, 3).picked.map(label)).not.toContain("oxion:gpt-5.6-luna");
   });
 });
