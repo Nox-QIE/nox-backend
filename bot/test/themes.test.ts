@@ -44,7 +44,7 @@ describe("Nox themes", () => {
     });
     const users = [11, 22, 33, 44, 55];
     users.forEach((u) => registry.markStarted(u));
-    await registry.create(-1, 11, "Ava", "id", themeIdFrom("horor")!);
+    await registry.create(-1, 11, "Ava", "id", { agentId: themeIdFrom("horor")! });
     const room = registry.roomOfChat(-1)!;
 
     const buttons = messenger.sent[0]!.keyboard!.flat().map((b) => b.text);

@@ -1,6 +1,6 @@
 import type { PublicView, Role, Team } from "@nox/shared/engine";
 import { esc, unesc, type Lang } from "../i18n.js";
-import { TemplateNarrator, type Narrator } from "../narrator.js";
+import { TemplateNarrator, type Narrator, type Wording } from "../narrator.js";
 import { checkNarration } from "./guard.js";
 import { costUsd, type GmModel, type GmUsage } from "./model.js";
 import { systemPrompt, userPrompt, type Beat, type Persona } from "./prompt.js";
@@ -14,6 +14,8 @@ export interface LlmNarratorOptions {
   price?: [number, number];
   /** Hosted persona from the Agent Marketplace; changes voice only, never rules or facts. */
   persona?: Persona;
+  /** Scenario wording for the factual lines (Scam Shield). */
+  wording?: Wording;
 }
 
 export interface GmStats {
@@ -55,7 +57,7 @@ export class LlmNarrator implements Narrator {
   };
 
   constructor(private readonly opts: LlmNarratorOptions) {
-    this.template = new TemplateNarrator(opts.lang);
+    this.template = new TemplateNarrator(opts.lang, opts.wording);
     this.system = systemPrompt(opts.lang, opts.persona);
   }
 
