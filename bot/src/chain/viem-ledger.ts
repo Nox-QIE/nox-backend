@@ -173,8 +173,11 @@ export class ViemLedger implements GameLedger {
   startGame(gameId: Hex, configHash: Hex, players: number[], rolesRoot: Hex) {
     this.enqueue(gameId, "start", async () => {
       await this.asOperator("createGame", [gameId, configHash]);
-      // Joins come from different wallets, so they can be in flight together.
-      await Promise.all(players.map((p) => this.asPlayer(p, "joinGame", [gameId])));
+      // Joins come from different wallets, so they can be in flight together. Wait for all of them
+      // to settle before failing, so a later cancel never races joins or drips still in flight.
+      const joins = await Promise.allSettled(players.map((p) => this.asPlayer(p, "joinGame", [gameId])));
+      const failed = joins.find((j): j is PromiseRejectedResult => j.status === "rejected");
+      if (failed) throw failed.reason;
       await this.asOperator("commitRoles", [gameId, rolesRoot]);
     });
   }
