@@ -1,7 +1,11 @@
 import { Bot, GrammyError, InlineKeyboard } from "grammy";
 import { randomInt } from "node:crypto";
 import { langFrom, T } from "./i18n.js";
-import type { Config, GmConfig } from "./config.js";
+import { defineChain } from "viem";
+import { noLedger, type GameLedger } from "./chain/ledger.js";
+import { qieMainnet, qieTestnet, ViemLedger } from "./chain/viem-ledger.js";
+import { PlayerWallets } from "./chain/wallets.js";
+import type { ChainConfig, Config, GmConfig } from "./config.js";
 import { createGmModel } from "./gm/model.js";
 import { GmModelPool } from "./gm/pool.js";
 import { LlmNarrator } from "./gm/llm-narrator.js";
@@ -73,8 +77,29 @@ export function buildGmPool(gm: GmConfig): GmModelPool {
   return new GmModelPool(entries, (max) => randomInt(max));
 }
 
+const anvil = defineChain({
+  id: 31337,
+  name: "Anvil",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: { default: { http: ["http://127.0.0.1:8545"] } },
+});
+
+export function buildLedger(c: ChainConfig, log = (l: Record<string, unknown>) => console.log(JSON.stringify(l))): GameLedger {
+  if (c.network === "off") return noLedger;
+  return new ViemLedger({
+    chain: c.network === "mainnet" ? qieMainnet : c.network === "testnet" ? qieTestnet : anvil,
+    ...(c.rpcUrl ? { rpcUrl: c.rpcUrl } : {}),
+    gameAddress: c.gameAddress!,
+    operatorKey: c.operatorKey!,
+    wallets: PlayerWallets.fromHex(c.walletSecret!),
+    minBalance: c.minWei,
+    dripAmount: c.dripWei,
+    log,
+  });
+}
+
 /** Wire Telegram updates to the registry. Nox stays a regular bot: no Mini App / Web App buttons. */
-export async function createNoxBot({ botToken, timings, gm }: Config) {
+export async function createNoxBot({ botToken, timings, gm, chain }: Config) {
   const bot = new Bot(botToken);
   await bot.init();
   const registry = new Registry({
@@ -84,6 +109,7 @@ export async function createNoxBot({ botToken, timings, gm }: Config) {
     randomInt: (max) => randomInt(max),
     botUsername: bot.botInfo.username,
     narratorFor: narratorFactory(gm),
+    ledger: buildLedger(chain),
   });
 
   bot.command("start", async (ctx) => {

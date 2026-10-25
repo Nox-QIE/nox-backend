@@ -12,6 +12,9 @@ import {
   type Role,
   type RoleAssignment,
 } from "@nox/shared/engine";
+import { ACTION_CODE, actionHash, commitRoles, configHash, randomBytes32, resultHash, ROLE_CODE, TEAM_CODE, type NightActionKind } from "@nox/shared/crypto-spec";
+import type { Hex } from "viem";
+import { noLedger, type GameLedger, type LedgerNightReveal } from "./chain/ledger.js";
 import { esc, roleName, T, type Lang } from "./i18n.js";
 import type { Narrator } from "./narrator.js";
 import type { Keyboard, Messenger, Scheduler, Timings } from "./ports.js";
@@ -28,6 +31,8 @@ export interface RoomDeps {
   botUsername: string;
   /** Called once the room ends or is cancelled, so the registry can forget it. */
   onClosed: (room: GameRoom) => void;
+  /** On-chain record (NoxGame). Defaults to none; gameplay never waits for it. */
+  ledger?: GameLedger;
 }
 
 export interface Reply {
@@ -36,6 +41,7 @@ export interface Reply {
 }
 
 const NIGHT_ROLES: ReadonlySet<Role> = new Set<Role>(["werewolf", "seer", "doctor"]);
+const ACTION_OF: Partial<Record<Role, NightActionKind>> = { werewolf: "kill", seer: "inspect", doctor: "protect" };
 
 /** One game in one Telegram group, from lobby to the end. All mutations run through a queue. */
 export class GameRoom {
@@ -51,6 +57,11 @@ export class GameRoom {
   private phaseStep: "night" | "discussion" | "vote" | null = null;
   private queue: Promise<unknown> = Promise.resolve();
   private readonly t;
+  private readonly ledger: GameLedger;
+  /** On-chain game id (bytes32), set when the game starts with a ledger. */
+  gameId: Hex | null = null;
+  private secrets = new Map<number, { salt: Hex; proof: Hex[] }>();
+  private readonly nights: LedgerNightReveal[] = [];
 
   constructor(
     readonly id: string,
@@ -61,6 +72,7 @@ export class GameRoom {
     private readonly deps: RoomDeps,
   ) {
     this.t = T[lang];
+    this.ledger = deps.ledger ?? noLedger;
     this.players.set(hostId, hostName);
   }
 
@@ -152,15 +164,36 @@ export class GameRoom {
     this.state = created.state;
     this.events.push(...created.events);
 
+    if (this.ledger.enabled) this.commitOnChain();
+
     const wolves = this.assignments.filter((a) => a.role === "werewolf").map((a) => a.id);
     for (const a of this.assignments) {
       const mates = a.role === "werewolf" ? wolves.filter((w) => w !== a.id).map((w) => this.name(w)) : [];
-      await this.deps.messenger.sendDM(Number(a.id), this.t.yourRole(roleName(this.lang, a.role), mates));
+      let text = this.t.yourRole(roleName(this.lang, a.role), mates);
+      const secret = this.secrets.get(Number(a.id));
+      if (secret) text += `\n\n${this.t.roleProof(secret.salt)}`;
+      await this.deps.messenger.sendDM(Number(a.id), text);
     }
 
     const view = publicView(this.state, this.events);
     await this.deps.messenger.sendGroup(this.chatId, await this.deps.narrator.intro(view, ids.map((id) => this.name(id))));
     await this.startNight();
+  }
+
+  /** Lock the roles on-chain (Merkle root) before anyone receives theirs. */
+  private commitOnChain() {
+    const gameId = randomBytes32();
+    const committed = commitRoles(
+      gameId,
+      this.assignments.map((a) => ({ player: this.ledger.addressOf(Number(a.id))!, role: a.role })),
+    );
+    this.assignments.forEach((a, i) => {
+      const p = committed.players[i]!;
+      this.secrets.set(Number(a.id), { salt: p.salt, proof: p.proof });
+    });
+    this.gameId = gameId;
+    const config = { players: this.assignments.length, timings: this.deps.timings, revealOnDeath: true, lang: this.lang };
+    this.ledger.startGame(gameId, configHash(config), this.assignments.map((a) => Number(a.id)), committed.root);
   }
 
   private exec(cmd: Command): GameEvent[] {
@@ -209,10 +242,20 @@ export class GameRoom {
         if (e instanceof GameRuleError) return { ok: false, text: this.t.noPermission };
         throw e;
       }
+      this.commitNight(userId, round, Number(targetId));
       const reply = { ok: true, text: this.t.actionOk(this.name(targetId)) };
       if (this.allNightActionsIn()) await this.endNight();
       return reply;
     });
+  }
+
+  private commitNight(userId: number, round: number, targetUserId: number) {
+    const kind = ACTION_OF[this.roleOf(userId)!];
+    if (!this.gameId || !kind) return;
+    const nonce = randomBytes32();
+    const hash = actionHash(this.gameId, round, this.ledger.addressOf(userId)!, kind, this.ledger.addressOf(targetUserId)!, nonce);
+    this.nights.push({ round, userId, action: ACTION_CODE[kind], targetUserId, nonce });
+    this.ledger.commitNightAction(this.gameId, round, userId, hash);
   }
 
   private allNightActionsIn(): boolean {
@@ -262,6 +305,7 @@ export class GameRoom {
         if (e instanceof GameRuleError) return { ok: false, text: this.t.noPermission };
         throw e;
       }
+      if (this.gameId) this.ledger.castVote(this.gameId, round, userId, Number(targetId));
       await this.deps.messenger.sendGroup(this.chatId, this.t.voted(this.name(userId), this.name(targetId)));
       const s = this.state!;
       const aliveCount = s.seats.filter((id) => s.players[id]!.alive).length;
@@ -274,8 +318,10 @@ export class GameRoom {
     if (this.phaseStep !== "vote") return;
     this.cancelTimer?.();
     this.phaseStep = null;
+    const dayRound = this.state!.round;
     const evs = this.exec({ type: "end_day" });
     const resolved = evs.find((e) => e.type === "day_resolved");
+    if (this.gameId && resolved) this.ledger.recordRound(this.gameId, dayRound, resultHash(resolved));
     if (resolved?.type === "day_resolved") {
       const name = resolved.eliminated ? this.name(resolved.eliminated) : null;
       await this.deps.messenger.sendGroup(this.chatId, await this.deps.narrator.dayResult(publicView(this.state!, this.events), name, resolved.revealedRole));
@@ -290,6 +336,10 @@ export class GameRoom {
     this.status = "ended";
     this.phaseStep = null;
     this.cancelTimer?.();
+    if (this.gameId) {
+      const roles = this.assignments.map((a) => ({ userId: Number(a.id), role: ROLE_CODE[a.role], ...this.secrets.get(Number(a.id))! }));
+      this.ledger.finalize(this.gameId, roles, this.nights, resultHash(this.log), TEAM_CODE[ended.winner]);
+    }
     const roster = this.state!.seats.map((id) => ({ name: this.name(id), role: ended.roles[id]! }));
     await this.deps.messenger.sendGroup(this.chatId, await this.deps.narrator.gameOver(ended.winner, roster));
     this.deps.narrator.finish?.();

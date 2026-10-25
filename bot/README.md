@@ -80,13 +80,22 @@ Ukur biaya per game (memakai token sungguhan):
 node --env-file=.env --import tsx bot/scripts/gm-sample.ts
 ```
 
+## Blockchain (NoxGame di QIE)
+
+Default `NOX_CHAIN=off`: game jalan tanpa chain. Dengan `NOX_CHAIN=testnet|mainnet|local`:
+- Saat game mulai: `createGame` → tiap pemain `joinGame` dari wallet-nya sendiri → `commitRoles` (Merkle root peran). Tiap pemain menerima kode `salt` di DM untuk membuktikan perannya.
+- Aksi malam → `commitNightAction` (hash + nonce rahasia), vote → `castVote`, akhir siang → `recordRound`, akhir game → `revealAndFinalize` (semua peran & aksi diverifikasi kontrak, credits di-mint).
+- Wallet pemain diturunkan dari `NOX_WALLET_SECRET` (tanpa database kunci); operator mengisi gas otomatis (gas drip). Detail: [ADR-002](../docs/adr/ADR-002-chain-integration.md).
+- Game tidak pernah menunggu chain; error chain dicatat sebagai `chain_error` dan game tetap jalan.
+- Setelah kontrak berubah: `(cd ../nox-contracts && forge build) && node --import tsx bot/scripts/sync-contracts.ts`.
+
 ## Tes
 
 ```bash
 npm test
 ```
 
-Tes memakai `FakeMessenger` + `FakeScheduler` + `FakeModel`, termasuk satu game penuh 5 pemain sampai menang, replay log, guard, fallback, dan server HTTP lokal yang meniru Oxion.
+Tes memakai `FakeMessenger` + `FakeScheduler` + `FakeModel`; `chain.e2e.test.ts` men-deploy kontrak asli ke anvil dan memainkan satu game penuh (dilewati bila anvil tidak terpasang), termasuk satu game penuh 5 pemain sampai menang, replay log, guard, fallback, dan server HTTP lokal yang meniru Oxion.
 
 ## Belum (M1)
 

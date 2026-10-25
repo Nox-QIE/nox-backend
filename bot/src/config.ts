@@ -20,10 +20,23 @@ export interface GmConfig {
   price?: [number, number];
 }
 
+export interface ChainConfig {
+  /** "off" (default): no chain. "local" = anvil (31337), "testnet" = QIE 1983, "mainnet" = QIE 1990. */
+  network: "off" | "local" | "testnet" | "mainnet";
+  rpcUrl?: string;
+  gameAddress?: `0x${string}`;
+  operatorKey?: `0x${string}`;
+  walletSecret?: string;
+  /** Gas drip in wei: top a player up to dripWei when below minWei. */
+  dripWei: bigint;
+  minWei: bigint;
+}
+
 export interface Config {
   botToken: string;
   timings: Timings;
   gm: GmConfig;
+  chain: ChainConfig;
 }
 
 const seconds = (env: NodeJS.ProcessEnv, key: string, fallbackMs: number) => {
@@ -46,6 +59,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       voteMs: seconds(env, "VOTE_SECONDS", DEFAULT_TIMINGS.voteMs),
     },
     gm: loadGmConfig(env),
+    chain: loadChainConfig(env),
   };
 }
 
@@ -94,4 +108,40 @@ export function parsePool(spec: string): GmPoolEntryConfig[] {
     });
   if (!entries.length) throw new Error("NOX_GM_MODELS is empty");
   return entries;
+}
+
+const qieToWei = (v: string, key: string) => {
+  if (!/^\d+(\.\d{1,18})?$/.test(v)) throw new Error(`${key} must be a QIE amount like 0.002`);
+  const [i, f = ""] = v.split(".");
+  return BigInt(i!) * 10n ** 18n + BigInt(f.padEnd(18, "0"));
+};
+
+const hex = (v: string | undefined, key: string, bytes: number): `0x${string}` | undefined => {
+  if (!v) return undefined;
+  if (!new RegExp(`^0x[0-9a-fA-F]{${bytes * 2}}$`).test(v)) throw new Error(`${key} must be 0x + ${bytes * 2} hex characters`);
+  return v as `0x${string}`;
+};
+
+export function loadChainConfig(env: NodeJS.ProcessEnv = process.env): ChainConfig {
+  const network = env.NOX_CHAIN || "off";
+  if (!["off", "local", "testnet", "mainnet"].includes(network)) throw new Error('NOX_CHAIN must be "off", "local", "testnet" or "mainnet"');
+  const c: ChainConfig = {
+    network: network as ChainConfig["network"],
+    dripWei: qieToWei(env.NOX_GAS_DRIP || "0.002", "NOX_GAS_DRIP"),
+    minWei: qieToWei(env.NOX_GAS_MIN || "0.0005", "NOX_GAS_MIN"),
+  };
+  if (c.network === "off") return c;
+  if (env.NOX_RPC_URL) c.rpcUrl = env.NOX_RPC_URL;
+  else if (c.network === "local") c.rpcUrl = "http://127.0.0.1:8545";
+  const game = env.NOX_GAME_ADDRESS;
+  if (!game || !/^0x[0-9a-fA-F]{40}$/.test(game)) throw new Error("NOX_GAME_ADDRESS must be the deployed NoxGame address");
+  c.gameAddress = game as `0x${string}`;
+  const operatorKey = hex(env.NOX_OPERATOR_KEY, "NOX_OPERATOR_KEY", 32);
+  if (!operatorKey) throw new Error("NOX_OPERATOR_KEY is not set");
+  c.operatorKey = operatorKey;
+  if (!env.NOX_WALLET_SECRET || env.NOX_WALLET_SECRET.replace(/^0x/, "").length < 64) {
+    throw new Error("NOX_WALLET_SECRET must be at least 32 bytes of hex (openssl rand -hex 32)");
+  }
+  c.walletSecret = env.NOX_WALLET_SECRET;
+  return c;
 }
