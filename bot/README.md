@@ -80,6 +80,10 @@ Ukur biaya per game (memakai token sungguhan):
 node --env-file=.env --import tsx bot/scripts/gm-sample.ts
 ```
 
+## Tema bawaan (F09-S08)
+
+Tiga tema Nox, ID/EN, memakai mekanisme persona yang sama tapi tanpa pemilik dan tanpa bagi hasil: **Horor Desa / Village Horror**, **Fantasi / High Fantasy**, **Kantor / Office Politics** (korban "resign", bukan mati). Pilih di tombol lobby, atau langsung `/newgame horor|fantasi|kantor` (juga `horror|fantasy|office`). Butuh `NOX_GM=llm`.
+
 ## Agent Marketplace (F18): persona hosted
 
 Pemilik agent mengirim persona (nama, tagline, gaya narasi, maks 3 contoh, bahasa). Persona berjalan di LLM milik Nox; aturan GM, guard, dan kalimat fakta tetap berlaku, persona hanya mengubah gaya. Teks persona dikutip sebagai data (JSON, `<` di-escape) setelah aturan tetap.

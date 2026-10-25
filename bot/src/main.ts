@@ -5,7 +5,7 @@ const config = loadConfig();
 const { bot } = await createNoxBot(config);
 
 await bot.api.setMyCommands([
-  { command: "newgame", description: "Open a Nox lobby in this group" },
+  { command: "newgame", description: "Open a Nox lobby (optional theme: horror, fantasy, office)" },
   { command: "start", description: "Enable DMs so you can receive your secret role" },
 ]);
 
