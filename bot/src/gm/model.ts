@@ -29,7 +29,7 @@ export type GmProvider = "anthropic" | "oxion";
 export interface GmModelOptions {
   provider: GmProvider;
   model: string;
-  /** Oxion only: Anthropic-compatible root (the SDK appends /v1/messages). */
+  /** Oxion only: Anthropic-compatible root; a trailing /v1 (as in Oxion's docs) is accepted. */
   baseURL?: string;
   /** Oxion only: the cc_… key, sent as a Bearer token. */
   authToken?: string;
@@ -39,7 +39,9 @@ export function createGmModel(o: GmModelOptions): GmModel {
   if (o.provider === "anthropic") return new AnthropicGmModel(o.model, new Anthropic(), true);
   if (!o.authToken) throw new Error("OXION_API_KEY is not set");
   // apiKey: null so a stray ANTHROPIC_API_KEY in the environment is never sent to a third party.
-  const client = new Anthropic({ baseURL: o.baseURL ?? "https://oxionai.com", apiKey: null, authToken: o.authToken });
+  // The SDK appends /v1/messages itself, so drop a trailing /v1 to avoid /v1/v1/messages.
+  const baseURL = (o.baseURL ?? "https://oxionai.com").replace(/\/+$/, "").replace(/\/v1$/, "");
+  const client = new Anthropic({ baseURL, apiKey: null, authToken: o.authToken });
   return new AnthropicGmModel(o.model, client, false);
 }
 
@@ -102,7 +104,8 @@ const PRICES: Record<string, [number, number]> = {
 
 /** `price` overrides the built-in Claude API table, e.g. for a gateway with its own rates. */
 export function costUsd(model: string, u: GmUsage, price?: [number, number]): number | null {
-  const p = price ?? PRICES[model];
+  // Gateways spell versions with dots (Oxion: "claude-opus-5.5"); the Claude API uses dashes.
+  const p = price ?? PRICES[model.replace(/\./g, "-")];
   if (!p) return null;
   const [inp, out] = p;
   return (u.inputTokens * inp + u.cacheReadTokens * inp * 0.1 + u.cacheWriteTokens * inp * 1.25 + u.outputTokens * out) / 1e6;
