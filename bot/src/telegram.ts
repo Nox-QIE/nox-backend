@@ -3,6 +3,7 @@ import { randomInt } from "node:crypto";
 import { langFrom, T } from "./i18n.js";
 import type { Config, GmConfig } from "./config.js";
 import { createGmModel } from "./gm/model.js";
+import { GmModelPool } from "./gm/pool.js";
 import { LlmNarrator } from "./gm/llm-narrator.js";
 import { TemplateNarrator, type Narrator } from "./narrator.js";
 import { realScheduler, type Keyboard, type Messenger } from "./ports.js";
@@ -52,9 +53,24 @@ const stripTags = (html: string) => html.replace(/<[^>]+>/g, "").replace(/&lt;/g
 
 export function narratorFactory(gm: GmConfig): (lang: "id" | "en") => Narrator {
   if (gm.mode === "template") return (lang) => new TemplateNarrator(lang);
-  const model = createGmModel(gm);
+  const pool = buildGmPool(gm);
   const log = (line: Record<string, unknown>) => console.log(JSON.stringify(line));
-  return (lang) => new LlmNarrator({ model, lang, timeoutMs: gm.timeoutMs, log, ...(gm.price ? { price: gm.price } : {}) });
+  // Each game (room) gets its own pick from the pool.
+  return (lang) => new LlmNarrator({ model: pool.forGame(), lang, timeoutMs: gm.timeoutMs, log, ...(gm.price ? { price: gm.price } : {}) });
+}
+
+export function buildGmPool(gm: GmConfig): GmModelPool {
+  const entries = gm.pool.map((e) => ({
+    label: `${e.provider}:${e.model}`,
+    weight: e.weight,
+    model: createGmModel({
+      provider: e.provider,
+      model: e.model,
+      ...(gm.baseURL ? { baseURL: gm.baseURL } : {}),
+      ...(gm.authToken ? { authToken: gm.authToken } : {}),
+    }),
+  }));
+  return new GmModelPool(entries, (max) => randomInt(max));
 }
 
 /** Wire Telegram updates to the registry. Nox stays a regular bot: no Mini App / Web App buttons. */

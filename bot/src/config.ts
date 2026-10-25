@@ -1,12 +1,18 @@
 import type { GmProvider } from "./gm/model.js";
 import { DEFAULT_TIMINGS, type Timings } from "./ports.js";
 
-export interface GmConfig {
-  /** "template" (default, no network) or "llm" (Claude via the Anthropic SDK). */
-  mode: "template" | "llm";
+export interface GmPoolEntryConfig {
   /** "anthropic" = Claude API with the SDK's own credentials; "oxion" = Oxion AI gateway. */
   provider: GmProvider;
   model: string;
+  weight: number;
+}
+
+export interface GmConfig {
+  /** "template" (default, no network) or "llm" (Claude via the Anthropic SDK). */
+  mode: "template" | "llm";
+  /** One entry = one fixed model; several = a model per game picked by weight, the rest as failover. */
+  pool: GmPoolEntryConfig[];
   timeoutMs: number;
   baseURL?: string;
   authToken?: string;
@@ -46,15 +52,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 export function loadGmConfig(env: NodeJS.ProcessEnv = process.env): GmConfig {
   const mode = env.NOX_GM ?? "template";
   if (mode !== "template" && mode !== "llm") throw new Error('NOX_GM must be "template" or "llm"');
-  const provider = env.NOX_GM_PROVIDER ?? "anthropic";
-  if (provider !== "anthropic" && provider !== "oxion") throw new Error('NOX_GM_PROVIDER must be "anthropic" or "oxion"');
   const gm: GmConfig = {
     mode,
-    provider,
-    model: env.NOX_GM_MODEL || "claude-opus-5-5",
+    pool: env.NOX_GM_MODELS ? parsePool(env.NOX_GM_MODELS) : [singleEntry(env)],
     timeoutMs: seconds(env, "NOX_GM_TIMEOUT_SECONDS", 8000),
   };
-  if (provider === "oxion") {
+  if (gm.pool.some((e) => e.provider === "oxion")) {
     if (env.NOX_GM_BASE_URL) gm.baseURL = env.NOX_GM_BASE_URL;
     if (env.OXION_API_KEY) gm.authToken = env.OXION_API_KEY;
   }
@@ -63,6 +66,32 @@ export function loadGmConfig(env: NodeJS.ProcessEnv = process.env): GmConfig {
     if (!Number.isFinite(i) || !Number.isFinite(o)) throw new Error('NOX_GM_PRICE_PER_M must look like "4,20"');
     gm.price = [i!, o!];
   }
-  if (mode === "llm" && provider === "oxion" && !gm.authToken) throw new Error("OXION_API_KEY is not set");
+  if (mode === "llm" && gm.pool.some((e) => e.provider === "oxion") && !gm.authToken) throw new Error("OXION_API_KEY is not set");
   return gm;
+}
+
+const asProvider = (p: string): GmProvider => {
+  if (p !== "anthropic" && p !== "oxion") throw new Error(`GM provider must be "anthropic" or "oxion", got "${p}"`);
+  return p;
+};
+
+function singleEntry(env: NodeJS.ProcessEnv): GmPoolEntryConfig {
+  return { provider: asProvider(env.NOX_GM_PROVIDER ?? "anthropic"), model: env.NOX_GM_MODEL || "claude-opus-5-5", weight: 1 };
+}
+
+/** "oxion:claude-opus-5.5@2, anthropic:claude-opus-5-5" → entries; weight defaults to 1. */
+export function parsePool(spec: string): GmPoolEntryConfig[] {
+  const entries = spec
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((item) => {
+      const m = /^([a-z]+):([^@\s]+)(?:@(\d+))?$/.exec(item);
+      if (!m) throw new Error(`NOX_GM_MODELS entry must look like "provider:model" or "provider:model@weight", got "${item}"`);
+      const weight = m[3] ? Number(m[3]) : 1;
+      if (weight < 1) throw new Error(`NOX_GM_MODELS weight must be ≥ 1, got "${item}"`);
+      return { provider: asProvider(m[1]!), model: m[2]!, weight };
+    });
+  if (!entries.length) throw new Error("NOX_GM_MODELS is empty");
+  return entries;
 }
