@@ -127,7 +127,9 @@ export class GameRoom {
   }
 
   private lobbyAgents(): AgentRecord[] {
-    return (this.deps.agents?.() ?? []).filter((a) => a.persona.langs.includes(this.lang)).slice(0, 4);
+    // Nox themes (negative ids) first, then at most 4 Marketplace agents.
+    const all = (this.deps.agents?.() ?? []).filter((a) => a.persona.langs.includes(this.lang));
+    return [...all.filter((a) => a.id < 0), ...all.filter((a) => a.id > 0).slice(0, 4)];
   }
 
   private lobbyText() {
@@ -143,7 +145,7 @@ export class GameRoom {
     if (agents.length) {
       const mark = (on: boolean, label: string) => (on ? `✓ ${label}` : label);
       rows.push([{ text: mark(this.agentId === null, this.t.gmDefault), data: `a:${this.id}:0` }]);
-      for (const a of agents) rows.push([{ text: mark(this.agentId === a.id, `🎭 ${a.persona.name}`), data: `a:${this.id}:${a.id}` }]);
+      for (const a of agents) rows.push([{ text: mark(this.agentId === a.id, `${a.id < 0 ? "🎨" : "🎭"} ${a.persona.name}`), data: `a:${this.id}:${a.id}` }]);
     }
     return rows;
   }
@@ -394,7 +396,9 @@ export class GameRoom {
       this.ledger.finalize(this.gameId, payload.roles, payload.nights, payload.resultHash, payload.winner);
     }
     const roster = this.state!.seats.map((id) => ({ name: this.name(id), role: ended.roles[id]! }));
-    this.deps.store?.recordFinishedGame({ agentId: this.agentId, players: this.players.size, hostId: this.hostId, chainGameId: this.gameId });
+    // Nox themes (negative ids) are not Marketplace agents: they count as Nox's own GM for revenue.
+    const agentId = this.agentId !== null && this.agentId > 0 ? this.agentId : null;
+    this.deps.store?.recordFinishedGame({ agentId, players: this.players.size, hostId: this.hostId, chainGameId: this.gameId });
     let over = await this.narrator.gameOver(ended.winner, roster);
     if (this.gameId && this.deps.webUrl) over += `\n\n${this.t.verifyLink(`${this.deps.webUrl.replace(/\/+$/, "")}/game/?id=${this.gameId}`)}`;
     await this.deps.messenger.sendGroup(this.chatId, over);

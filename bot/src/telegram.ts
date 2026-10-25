@@ -14,6 +14,7 @@ import type { Persona } from "./agents.js";
 import { TemplateNarrator, type Narrator } from "./narrator.js";
 import { realScheduler, type Keyboard, type Messenger } from "./ports.js";
 import { Registry } from "./registry.js";
+import { THEME_AGENTS, themeIdFrom } from "./themes.js";
 
 function opts(keyboard?: Keyboard) {
   if (!keyboard) return { parse_mode: "HTML" as const };
@@ -116,7 +117,7 @@ export async function createNoxBot({ botToken, dbPath, webUrl, timings, gm, chai
     botUsername: bot.botInfo.username,
     narratorFor: narratorFactory(gm),
     // Personas need an LLM; with template narration there is nothing to pick.
-    ...(gm.mode === "llm" ? { agents: () => store.listAgents(true) } : {}),
+    ...(gm.mode === "llm" ? { agents: () => [...THEME_AGENTS, ...store.listAgents(true)] } : {}),
     ledger,
     store,
     ...(webUrl ? { webUrl } : {}),
@@ -133,7 +134,9 @@ export async function createNoxBot({ botToken, dbPath, webUrl, timings, gm, chai
     if (!ctx.from) return;
     const lang = langFrom(ctx.from.language_code);
     if (ctx.chat.type === "private") return void (await ctx.reply(T[lang].groupOnly));
-    const r = await registry.create(ctx.chat.id, ctx.from.id, displayName(ctx.from), lang);
+    // "/newgame horor" preselects a Nox theme (needs the LLM Game Master).
+    const theme = gm.mode === "llm" ? themeIdFrom(ctx.match) : null;
+    const r = await registry.create(ctx.chat.id, ctx.from.id, displayName(ctx.from), lang, theme ?? undefined);
     if (!r.ok && r.text) await ctx.reply(r.text, { parse_mode: "HTML" });
   });
 

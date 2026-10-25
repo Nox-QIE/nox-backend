@@ -43,7 +43,8 @@ export class Registry {
     return this.rooms.get(roomId);
   }
 
-  async create(chatId: number, hostId: number, hostName: string, lang: Lang): Promise<Reply> {
+  /** `agentId` (e.g. a theme from "/newgame horor") is preselected in the lobby when available. */
+  async create(chatId: number, hostId: number, hostName: string, lang: Lang, agentId?: number): Promise<Reply> {
     const t = T[lang];
     if (this.byChat.has(chatId)) return { ok: false, text: t.gameExists };
     if (this.byUser.has(hostId)) return { ok: false, text: t.inOtherGame };
@@ -56,6 +57,7 @@ export class Registry {
     this.byChat.set(chatId, room.id);
     this.byUser.set(hostId, room.id);
     await room.open();
+    if (agentId !== undefined) await room.pickAgent(hostId, agentId);
     return { ok: true };
   }
 
