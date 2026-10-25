@@ -57,6 +57,15 @@ Model default `claude-opus-5-5`. Ganti lewat `NOX_GM_MODEL` setelah ukur biaya.
 - `gm_usage` mencatat `model` (pilihan utama) dan `byModel` (token per model yang benar-benar melayani).
 - Isi `OXION_API_KEY` bila ada entri `oxion`, dan kredensial Anthropic bila ada entri `anthropic`.
 
+**Isi pool otomatis dari API kedua provider:**
+
+```bash
+node --env-file=.env --import tsx bot/scripts/gm-discover.ts --dry-run   # lihat dulu
+node --env-file=.env --import tsx bot/scripts/gm-discover.ts             # tulis ke .env
+```
+
+Skrip mengambil daftar model (`models.list` Claude API + `GET /v1/models` Oxion), membuang model kecil/preview/termahal (`gemma`, `preview`, `mythos`, `fable`, embedding), lalu mengurutkan: Claude terbaru per tier di Claude API (opus, sonnet, haiku), lalu model terbaru tiap keluarga di Oxion (gpt, gemini, deepseek, qwen, kimi, glm, grok, seed, muse), lalu Claude di Oxion, lalu cadangan. Tiap kandidat dites dengan satu narasi pendek dan harus lolos guard. Sepuluh pertama yang lolos ditulis ke baris `NOX_GM_MODELS` (baris lain di `.env` tidak disentuh). Jumlah diatur `NOX_GM_DISCOVER_TOTAL`.
+
 Desain anti-bocor:
 - Tiap beat = 1–3 kalimat **suasana** dari LLM + kalimat **fakta** dari template. Fakta (siapa mati, peran yang terungkap, pemenang) tidak pernah bergantung pada LLM.
 - LLM hanya menerima fakta publik dalam JSON `<facts>`; ia tidak pernah tahu peran pemain hidup. Nama pemain diperlakukan sebagai data (anti prompt injection).
