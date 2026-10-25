@@ -30,6 +30,9 @@ export interface ChainConfig {
   /** Gas drip in wei: top a player up to dripWei when below minWei. */
   dripWei: bigint;
   minWei: bigint;
+  /** Daily gas drip caps in wei: per player and for all players together. */
+  dailyPerPlayerWei: bigint;
+  dailyBudgetWei: bigint;
 }
 
 export interface Config {
@@ -135,6 +138,8 @@ export function loadChainConfig(env: NodeJS.ProcessEnv = process.env): ChainConf
     network: network as ChainConfig["network"],
     dripWei: qieToWei(env.NOX_GAS_DRIP || "0.002", "NOX_GAS_DRIP"),
     minWei: qieToWei(env.NOX_GAS_MIN || "0.0005", "NOX_GAS_MIN"),
+    dailyPerPlayerWei: qieToWei(env.NOX_GAS_DAILY_PER_PLAYER || "0.01", "NOX_GAS_DAILY_PER_PLAYER"),
+    dailyBudgetWei: qieToWei(env.NOX_GAS_DAILY_BUDGET || "5", "NOX_GAS_DAILY_BUDGET"),
   };
   if (c.network === "off") return c;
   if (env.NOX_RPC_URL) c.rpcUrl = env.NOX_RPC_URL;
