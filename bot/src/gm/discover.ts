@@ -109,3 +109,44 @@ export function setEnvLine(envText: string, key: string, value: string): string 
   const re = new RegExp(`^${key}=.*$`, "m");
   return re.test(envText) ? envText.replace(re, line) : `${envText.replace(/\n?$/, "\n")}${line}\n`;
 }
+
+export type ProbeResult = "ok" | "outage" | "fail";
+
+/**
+ * Turn probe results into the final pool. Keeps the ranked order, at most `anthropicMax` Claude API
+ * entries, and `total` overall. A provider counts as down when none of its probes answered and
+ * outages (5xx / network) are at least as common as client errors (gateways answer the odd 401
+ * during maintenance). A down provider's best candidates are still kept, unverified, one per
+ * family, so its share is not handed to the other provider; runtime failover covers them.
+ */
+export function finalizePool(
+  ranked: Candidate[],
+  results: Map<string, ProbeResult>,
+  total: number,
+  anthropicMax: number,
+): { picked: Candidate[]; unverified: Candidate[] } {
+  const key = (c: Candidate) => `${c.provider}:${c.id}`;
+  const providers = [...new Set(ranked.map((c) => c.provider))];
+  const down = new Set(
+    providers.filter((p) => {
+      const rs = ranked.filter((c) => c.provider === p && results.has(key(c))).map((c) => results.get(key(c)));
+      const outages = rs.filter((r) => r === "outage").length;
+      return !rs.includes("ok") && outages > 0 && outages >= rs.length - outages;
+    }),
+  );
+  const picked: Candidate[] = [];
+  const unverified: Candidate[] = [];
+  let anthropic = 0;
+  for (const c of ranked) {
+    if (picked.length >= total) break;
+    if (c.provider === "anthropic" && anthropic >= anthropicMax) continue;
+    const r = results.get(key(c));
+    const keep =
+      r === "ok" || (r !== "fail" && down.has(c.provider) && !picked.some((p) => p.provider === c.provider && familyOf(p.id) === familyOf(c.id)));
+    if (!keep) continue;
+    picked.push(c);
+    if (r !== "ok") unverified.push(c);
+    if (c.provider === "anthropic") anthropic++;
+  }
+  return { picked, unverified };
+}
