@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Hex } from "viem";
+import type { AgentRecord, Persona } from "./agents.js";
 import type { LedgerNightReveal, LedgerRoleReveal } from "./chain/ledger.js";
 import type { Lang } from "./i18n.js";
 
@@ -37,6 +38,14 @@ export interface Store {
   setStatus(gameId: Hex, status: "finalized" | "cancelled"): void;
   /** Games whose on-chain record is not settled yet (running or ended, not finalized/cancelled). */
   unsettledGames(): GameRecord[];
+  addAgent(owner: string, persona: Persona): number;
+  getAgent(id: number): AgentRecord | null;
+  listAgents(activeOnly?: boolean): AgentRecord[];
+  setAgentStatus(id: number, status: AgentRecord["status"]): void;
+  setChainAgentId(id: number, chainAgentId: number): void;
+  /** One finished game narrated by an agent: the input for monthly revenue settlement. */
+  recordAgentUsage(agentId: number, players: number, chainGameId: Hex | null): void;
+  agentUsage(fromMs: number, toMs: number): { agentId: number; games: number; players: number }[];
 }
 
 /** Store encryption key, derived from the wallet secret so there is no extra secret to manage. */
@@ -61,6 +70,21 @@ export class SqliteStore implements Store {
     this.db.exec(`
       PRAGMA journal_mode = WAL;
       CREATE TABLE IF NOT EXISTS users (telegram_id INTEGER PRIMARY KEY, started_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS agents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner TEXT NOT NULL,
+        persona TEXT NOT NULL,
+        status TEXT NOT NULL,
+        chain_agent_id INTEGER,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS agent_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id INTEGER NOT NULL,
+        players INTEGER NOT NULL,
+        chain_game_id TEXT,
+        ended_at INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS games (
         game_id TEXT PRIMARY KEY,
         chat_id INTEGER NOT NULL,
@@ -133,5 +157,48 @@ export class SqliteStore implements Store {
       secret: this.open<GameSecret>(r.secret),
       finalize: r.finalize ? this.open<FinalizePayload>(r.finalize) : null,
     }));
+  }
+
+  addAgent(owner: string, persona: Persona): number {
+    const r = this.db
+      .prepare("INSERT INTO agents (owner, persona, status, created_at) VALUES (?, ?, 'active', ?)")
+      .run(owner, JSON.stringify(persona), Date.now());
+    return Number(r.lastInsertRowid);
+  }
+
+  private toAgent(r: { id: number; owner: string; persona: string; status: AgentRecord["status"]; chain_agent_id: number | null }): AgentRecord {
+    return { id: r.id, owner: r.owner, persona: JSON.parse(r.persona) as Persona, status: r.status, chainAgentId: r.chain_agent_id };
+  }
+
+  getAgent(id: number): AgentRecord | null {
+    const r = this.db.prepare("SELECT * FROM agents WHERE id = ?").get(id) as Parameters<SqliteStore["toAgent"]>[0] | undefined;
+    return r ? this.toAgent(r) : null;
+  }
+
+  listAgents(activeOnly = false): AgentRecord[] {
+    const sql = activeOnly ? "SELECT * FROM agents WHERE status = 'active' ORDER BY id" : "SELECT * FROM agents ORDER BY id";
+    return (this.db.prepare(sql).all() as Parameters<SqliteStore["toAgent"]>[0][]).map((r) => this.toAgent(r));
+  }
+
+  setAgentStatus(id: number, status: AgentRecord["status"]) {
+    this.db.prepare("UPDATE agents SET status = ? WHERE id = ?").run(status, id);
+  }
+
+  setChainAgentId(id: number, chainAgentId: number) {
+    this.db.prepare("UPDATE agents SET chain_agent_id = ? WHERE id = ?").run(chainAgentId, id);
+  }
+
+  recordAgentUsage(agentId: number, players: number, chainGameId: Hex | null) {
+    this.db
+      .prepare("INSERT INTO agent_usage (agent_id, players, chain_game_id, ended_at) VALUES (?, ?, ?, ?)")
+      .run(agentId, players, chainGameId, Date.now());
+  }
+
+  agentUsage(fromMs: number, toMs: number) {
+    return this.db
+      .prepare(
+        "SELECT agent_id AS agentId, COUNT(*) AS games, SUM(players) AS players FROM agent_usage WHERE ended_at >= ? AND ended_at < ? GROUP BY agent_id ORDER BY agent_id",
+      )
+      .all(fromMs, toMs) as { agentId: number; games: number; players: number }[];
   }
 }

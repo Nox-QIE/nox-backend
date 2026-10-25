@@ -39,6 +39,9 @@ type Dict = {
   yourRole: (role: string, wolves: string[]) => string;
   roleProof: (salt: string) => string;
   restartCancelled: string;
+  gmLine: (name: string) => string;
+  gmDefault: string;
+  gmPicked: (name: string) => string;
   verifyLink: (url: string) => string;
   pickKill: string;
   pickInspect: string;
@@ -78,6 +81,9 @@ export const T: Record<Lang, Dict> = {
     roleProof: (salt) => `🔐 Peranmu sudah dikunci di blockchain QIE sebelum dibagikan. Simpan kode ini untuk membuktikannya di akhir game:\n<code>${salt}</code>`,
     restartCancelled: "⚠️ Server Nox sempat restart, jadi game yang sedang berjalan di grup ini dibatalkan (juga di blockchain). Ketik /newgame untuk main lagi.",
     verifyLink: (url) => `🔍 Cek sendiri bahwa game ini adil (peran & aksi dibuka dan dihitung ulang di browsermu): <a href="${url}">${url}</a>`,
+    gmLine: (n) => `🎙 Game Master: ${n}. Host bisa memilih lewat tombol di bawah.`,
+    gmDefault: "🌙 Nox (bawaan)",
+    gmPicked: (n) => `Game Master: ${n}`,
     pickKill: "🌙 Pilih korban malam ini:",
     pickInspect: "🌙 Pilih pemain yang ingin kamu selidiki:",
     pickProtect: "🌙 Pilih pemain yang ingin kamu lindungi:",
@@ -114,6 +120,9 @@ export const T: Record<Lang, Dict> = {
     roleProof: (salt) => `🔐 Your role was locked on the QIE blockchain before it was dealt. Keep this code to verify it after the game:\n<code>${salt}</code>`,
     restartCancelled: "⚠️ The Nox server restarted, so the game running in this group was cancelled (on-chain too). Type /newgame to play again.",
     verifyLink: (url) => `🔍 Check for yourself that this game was fair (roles and actions revealed and recomputed in your browser): <a href="${url}">${url}</a>`,
+    gmLine: (n) => `🎙 Game Master: ${n}. The host can switch with the buttons below.`,
+    gmDefault: "🌙 Nox (default)",
+    gmPicked: (n) => `Game Master: ${n}`,
     pickKill: "🌙 Choose tonight's victim:",
     pickInspect: "🌙 Choose a player to investigate:",
     pickProtect: "🌙 Choose a player to protect:",

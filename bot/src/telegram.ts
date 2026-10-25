@@ -11,6 +11,7 @@ import { SqliteStore, storeKey, type Store } from "./store.js";
 import { createGmModel } from "./gm/model.js";
 import { GmModelPool } from "./gm/pool.js";
 import { LlmNarrator } from "./gm/llm-narrator.js";
+import type { Persona } from "./agents.js";
 import { TemplateNarrator, type Narrator } from "./narrator.js";
 import { realScheduler, type Keyboard, type Messenger } from "./ports.js";
 import { Registry } from "./registry.js";
@@ -57,12 +58,13 @@ export const displayName = (u: { first_name: string; last_name?: string; usernam
 
 const stripTags = (html: string) => html.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 
-export function narratorFactory(gm: GmConfig): (lang: "id" | "en") => Narrator {
+export function narratorFactory(gm: GmConfig): (lang: "id" | "en", persona?: Persona) => Narrator {
   if (gm.mode === "template") return (lang) => new TemplateNarrator(lang);
   const pool = buildGmPool(gm);
   const log = (line: Record<string, unknown>) => console.log(JSON.stringify(line));
   // Each game (room) gets its own pick from the pool.
-  return (lang) => new LlmNarrator({ model: pool.forGame(), lang, timeoutMs: gm.timeoutMs, log, ...(gm.price ? { price: gm.price } : {}) });
+  return (lang, persona) =>
+    new LlmNarrator({ model: pool.forGame(), lang, timeoutMs: gm.timeoutMs, log, ...(gm.price ? { price: gm.price } : {}), ...(persona ? { persona } : {}) });
 }
 
 export function buildGmPool(gm: GmConfig): GmModelPool {
@@ -117,6 +119,8 @@ export async function createNoxBot({ botToken, dbPath, webUrl, timings, gm, chai
     randomInt: (max) => randomInt(max),
     botUsername: bot.botInfo.username,
     narratorFor: narratorFactory(gm),
+    // Personas need an LLM; with template narration there is nothing to pick.
+    ...(gm.mode === "llm" ? { agents: () => store.listAgents(true) } : {}),
     ledger,
     store,
     ...(webUrl ? { webUrl } : {}),
@@ -137,7 +141,7 @@ export async function createNoxBot({ botToken, dbPath, webUrl, timings, gm, chai
     if (!r.ok && r.text) await ctx.reply(r.text, { parse_mode: "HTML" });
   });
 
-  // Callback data: j:<room> | s:<room> | n:<room>:<round>:<target> | v:<room>:<round>:<target>
+  // Callback data: j:<room> | s:<room> | a:<room>:<agentId> | n:<room>:<round>:<target> | v:<room>:<round>:<target>
   bot.on("callback_query:data", async (ctx) => {
     const [kind, roomId, roundStr, target] = ctx.callbackQuery.data.split(":");
     const room = roomId ? registry.get(roomId) : undefined;
@@ -147,6 +151,7 @@ export async function createNoxBot({ botToken, dbPath, webUrl, timings, gm, chai
     if (room) {
       if (kind === "j") reply = await registry.join(room.id, user.id, displayName(user));
       else if (kind === "s") reply = await room.start(user.id);
+      else if (kind === "a") reply = await room.pickAgent(user.id, Number(roundStr));
       else if (kind === "n" && target) reply = await room.nightAction(user.id, round, target);
       else if (kind === "v" && target) reply = await room.vote(user.id, round, target);
     }
