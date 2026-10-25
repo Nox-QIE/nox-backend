@@ -80,6 +80,13 @@ Ukur biaya per game (memakai token sungguhan):
 node --env-file=.env --import tsx bot/scripts/gm-sample.ts
 ```
 
+## Red-team & nama pemain
+
+- **Nama tampilan** pemain dibersihkan saat masuk lobby (`bot/src/names.ts`): karakter tak terlihat dibuang, maks 32 karakter, dan nama yang berisi link/domain, @mention, markup, atau ajakan uang diganti alias ("Pemain 3"). Nama tidak bisa dipakai untuk menyebar link phishing lewat pesan bot.
+- **20 serangan** (`bot/src/gm/redteam.ts`): lewat nama tampilan (abaikan aturan, keluar dari blok `<facts>`, link phishing, t.me, @admin palsu, HTML, minta setor, link tersembunyi karakter nol-lebar, menuduh pemain hidup, banjir nama) dan lewat persona Marketplace (bongkar peran, cetak instruksi sistem, minta kirim QIE, link, markdown/HTML, akun support palsu, credits bisa dicairkan, menutup blok `<style>`), plus kombinasi.
+- CI menjalankan semuanya terhadap **model yang menuruti semua injeksi**: guard + pembersihan nama harus tetap menahan semuanya (ID & EN).
+- Uji nyata: `node --env-file=.env --import tsx bot/scripts/redteam.ts anthropic:claude-opus-5-5 id`. Hasil 25 Okt 2026: 20/20 tertahan; model termakan umpan 1 kali dan ditolak guard.
+
 ## Tema bawaan (F09-S08)
 
 Tiga tema Nox, ID/EN, memakai mekanisme persona yang sama tapi tanpa pemilik dan tanpa bagi hasil: **Horor Desa / Village Horror**, **Fantasi / High Fantasy**, **Kantor / Office Politics** (korban "resign", bukan mati). Pilih di tombol lobby, atau langsung `/newgame horor|fantasi|kantor` (juga `horror|fantasy|office`). Butuh `NOX_GM=llm`.

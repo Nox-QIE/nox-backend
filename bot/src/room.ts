@@ -17,6 +17,7 @@ import type { Hex } from "viem";
 import { noLedger, type GameLedger, type LedgerNightReveal } from "./chain/ledger.js";
 import { esc, roleName, T, type Lang } from "./i18n.js";
 import type { AgentRecord, Persona } from "./agents.js";
+import { safeName } from "./names.js";
 import type { Narrator, Wording } from "./narrator.js";
 import type { Scenario, ScenarioText } from "./scenarios.js";
 import type { Keyboard, Messenger, Scheduler, Timings } from "./ports.js";
@@ -91,7 +92,7 @@ export class GameRoom {
     this.ledger = deps.ledger ?? noLedger;
     this.sc = scenario ? scenario.text[lang] : null;
     this.narrator = this.sc ? deps.narratorFor(lang, this.sc.persona, this.sc.wording) : deps.narratorFor(lang);
-    this.players.set(hostId, hostName);
+    this.players.set(hostId, safeName(hostName, 1, lang));
   }
 
   /** Commands and assignment so far — enough to replay the game with @nox/shared/engine. */
@@ -177,11 +178,11 @@ export class GameRoom {
       if (this.status !== "lobby") return { ok: false, text: this.t.notLobby };
       if (this.players.has(userId)) return { ok: false, text: this.t.alreadyIn };
       if (this.players.size >= MAX_PLAYERS) return { ok: false, text: this.t.lobbyFull };
-      this.players.set(userId, displayName);
+      this.players.set(userId, safeName(displayName, this.players.size + 1, this.lang));
       if (this.lobbyMessageId !== null) {
         await this.deps.messenger.editGroup(this.chatId, this.lobbyMessageId, this.lobbyText(), this.lobbyKeyboard());
       }
-      return { ok: true, text: this.t.joined(esc(displayName)) };
+      return { ok: true, text: this.t.joined(esc(this.players.get(userId)!)) };
     });
   }
 
