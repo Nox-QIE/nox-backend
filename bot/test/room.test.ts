@@ -68,11 +68,15 @@ describe("lobby", () => {
     expect(registry.roomOfUser(11)).toBeUndefined();
   });
 
-  it("escapes HTML in player names", async () => {
+  it("replaces markup names with a seat alias and still escapes the rest", async () => {
     const { registry, messenger } = setup();
     registry.startedUsers.add(77);
     await registry.create(CHAT, 77, "<b>evil</b>", "en");
-    expect(messenger.group()[0]).toContain("&lt;b&gt;evil&lt;/b&gt;");
+    expect(messenger.group()[0]).toContain("lobby opened by Player 1");
+    expect(messenger.group()[0]).not.toContain("evil");
+    registry.startedUsers.add(78);
+    await registry.create(-2, 78, "Tom & Jerry", "en");
+    expect(messenger.group().at(-1)).toContain("Tom &amp; Jerry");
   });
 });
 

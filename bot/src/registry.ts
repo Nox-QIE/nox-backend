@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { T, type Lang } from "./i18n.js";
+import { esc, T, type Lang } from "./i18n.js";
 import { GameRoom, type Reply, type RoomDeps } from "./room.js";
+import { safeName } from "./names.js";
 import type { Scenario } from "./scenarios.js";
 
 type Deps = Omit<RoomDeps, "onClosed">;
@@ -60,7 +61,8 @@ export class Registry {
     const t = T[lang];
     if (this.byChat.has(chatId)) return { ok: false, text: t.gameExists };
     if (this.byUser.has(hostId)) return { ok: false, text: t.inOtherGame };
-    if (!this.startedUsers.has(hostId)) return { ok: false, text: t.needStart(hostName, this.deps.botUsername) };
+    // This reply goes to the group, so it must not echo a raw display name.
+    if (!this.startedUsers.has(hostId)) return { ok: false, text: t.needStart(esc(safeName(hostName, 1, lang)), this.deps.botUsername) };
     const room = new GameRoom(
       this.newId(),
       chatId,
@@ -82,7 +84,7 @@ export class Registry {
     const room = this.rooms.get(roomId);
     if (!room) return { ok: false, text: T.en.stale };
     const t = T[room.lang];
-    if (!this.startedUsers.has(userId)) return { ok: false, text: t.needStart(name, this.deps.botUsername) };
+    if (!this.startedUsers.has(userId)) return { ok: false, text: t.needStart(esc(safeName(name, room.players.size + 1, room.lang)), this.deps.botUsername) };
     const other = this.byUser.get(userId);
     if (other && other !== roomId) return { ok: false, text: t.inOtherGame };
     const r = await room.join(userId, name);
