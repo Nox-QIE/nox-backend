@@ -36,6 +36,8 @@ export interface Config {
   botToken: string;
   /** SQLite file for started users and encrypted game secrets. */
   dbPath: string;
+  /** Public dashboard URL for proof links, e.g. https://nox.example (optional). */
+  webUrl?: string;
   timings: Timings;
   gm: GmConfig;
   chain: ChainConfig;
@@ -55,6 +57,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     botToken,
     dbPath: env.NOX_DB_PATH || "data/nox.db",
+    ...(env.NOX_WEB_URL ? { webUrl: env.NOX_WEB_URL } : {}),
     timings: {
       lobbyMs: seconds(env, "LOBBY_SECONDS", DEFAULT_TIMINGS.lobbyMs),
       nightMs: seconds(env, "NIGHT_SECONDS", DEFAULT_TIMINGS.nightMs),

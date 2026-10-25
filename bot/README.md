@@ -88,6 +88,8 @@ Default `NOX_CHAIN=off`: game jalan tanpa chain. Dengan `NOX_CHAIN=testnet|mainn
 - Wallet pemain diturunkan dari `NOX_WALLET_SECRET` (tanpa database kunci); operator mengisi gas otomatis (gas drip). Detail: [ADR-002](../docs/adr/ADR-002-chain-integration.md).
 - Game tidak pernah menunggu chain; error chain dicatat sebagai `chain_error`, game tetap jalan, dan game itu otomatis di-cancel on-chain.
 - Rahasia game (salt, proof, nonce) disimpan di SQLite (`NOX_DB_PATH`, default `data/nox.db`), terenkripsi AES-256-GCM dengan kunci turunan `NOX_WALLET_SECRET`. Saat bot start, game yang belum selesai di chain dibereskan: yang sudah berakhir di-finalize ulang, yang masih berjalan di-cancel dan grupnya diberi tahu.
+- Dengan `NOX_WEB_URL`, pesan akhir game menyertakan link halaman bukti di [nox-frontend](https://github.com/Nox-QIE/nox-frontend).
+- Chain lokal untuk dev: `npm run dev:chain` menjalankan anvil, deploy kontrak, memainkan 2 game demo, lalu mencetak env untuk nox-frontend.
 - Setelah kontrak berubah: `(cd ../nox-contracts && forge build) && node --import tsx bot/scripts/sync-contracts.ts`.
 
 ## Tes
