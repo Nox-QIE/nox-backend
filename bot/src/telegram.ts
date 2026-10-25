@@ -100,6 +100,8 @@ export function buildLedger(c: ChainConfig, log = logLine, store?: Store): GameL
     wallets: PlayerWallets.fromHex(c.walletSecret!),
     minBalance: c.minWei,
     dripAmount: c.dripWei,
+    dripDailyCapPerPlayer: c.dailyPerPlayerWei,
+    dripDailyBudget: c.dailyBudgetWei,
     log,
     ...(store ? { onSettled: (gameId, outcome) => store.setStatus(gameId, outcome) } : {}),
   });

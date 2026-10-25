@@ -3,7 +3,7 @@ import { createPublicClient, createWalletClient, defineChain, http, type Address
 import { privateKeyToAccount } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { NoxCreditsAbi, NoxCreditsBytecode, NoxGameAbi, NoxGameBytecode } from "../src/chain/contracts.js";
-import { ViemLedger } from "../src/chain/viem-ledger.js";
+import { rpcTransport, ViemLedger } from "../src/chain/viem-ledger.js";
 import { PlayerWallets } from "../src/chain/wallets.js";
 import { TemplateNarrator } from "../src/narrator.js";
 import type { GameLedger } from "../src/chain/ledger.js";
@@ -58,6 +58,12 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
 
   afterAll(() => {
     anvil?.kill();
+  });
+
+  it("fails over to the next RPC when the first one is down", async () => {
+    const twoRpcs = defineChain({ ...chain, rpcUrls: { default: { http: ["http://127.0.0.1:1", RPC] } } });
+    const client = createPublicClient({ chain: twoRpcs, transport: rpcTransport(twoRpcs) });
+    expect(await client.getChainId()).toBe(31337);
   });
 
   it("records a full game: roles committed, actions and votes from player wallets, reveal verified, credits minted", async () => {
@@ -197,4 +203,43 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     expect(store.unsettledGames()).toEqual([]);
     expect(logs.filter((l) => l.event === "chain_error")).toEqual([]);
   }, 90_000);
+
+  it("refuses gas drips beyond the daily budget and cancels that game cleanly", async () => {
+    const logs: Record<string, unknown>[] = [];
+    const wallets = new PlayerWallets(Uint8Array.from({ length: 32 }, (_, i) => 200 + i));
+    const ledger = new ViemLedger({
+      chain,
+      rpcUrl: RPC,
+      gameAddress,
+      operatorKey: OPERATOR_KEY,
+      wallets,
+      minBalance: 10n ** 15n,
+      dripAmount: 10n ** 16n,
+      dripDailyBudget: 3n * 10n ** 16n, // enough for 3 of the 5 players
+      pollingMs: 50,
+      log: (l) => logs.push(l),
+    });
+    const messenger = new FakeMessenger();
+    const registry = new Registry({
+      messenger,
+      scheduler: new FakeScheduler(),
+      timings: { lobbyMs: 1000, nightMs: 1000, discussionMs: 1000, voteMs: 1000 },
+      randomInt: () => 0,
+      botUsername: "nox_test_bot",
+      narratorFor: (lang) => new TemplateNarrator(lang),
+      ledger,
+    });
+    const users = [401, 402, 403, 404, 405];
+    users.forEach((u) => registry.markStarted(u));
+    await registry.create(-40, 401, "Host", "en");
+    const room = registry.roomOfChat(-40)!;
+    for (const u of users.slice(1)) await registry.join(room.id, u, `P${u}`);
+    await room.start(401);
+    await ledger.idle();
+
+    expect(logs.filter((l) => l.event === "gas_drip")).toHaveLength(3);
+    expect(logs.some((l) => l.event === "chain_error" && String(l.error).includes("daily gas budget"))).toBe(true);
+    expect(await ledger.statusOf(room.gameId!)).toBe(4); // cancelled, not left running
+    expect(room.status).toBe("running"); // the Telegram game itself goes on
+  }, 60_000);
 });

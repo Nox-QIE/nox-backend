@@ -2,7 +2,9 @@ import {
   createPublicClient,
   createWalletClient,
   defineChain,
+  fallback,
   http,
+  type Transport,
   type Account,
   type Address,
   type Chain,
@@ -18,7 +20,8 @@ export const qieTestnet: Chain = defineChain({
   id: 1983,
   name: "QIE Testnet",
   nativeCurrency: { name: "QIE", symbol: "QIE", decimals: 18 },
-  rpcUrls: { default: { http: ["https://rpc2testnet.qie.digital/"] } },
+  // Checked 25 Oct 2026: rpc1, rpc3 and rpc6 testnet were down.
+  rpcUrls: { default: { http: ["https://rpc2testnet.qie.digital/", "https://rpc4testnet.qie.digital/", "https://rpc5testnet.qie.digital/"] } },
   blockExplorers: { default: { name: "QIE Testnet Explorer", url: "https://testnet.qie.digital" } },
 });
 
@@ -26,12 +29,30 @@ export const qieMainnet: Chain = defineChain({
   id: 1990,
   name: "QIE Mainnet",
   nativeCurrency: { name: "QIE", symbol: "QIE", decimals: 18 },
-  rpcUrls: { default: { http: ["https://rpc1mainnet.qie.digital"] } },
+  rpcUrls: {
+    default: {
+      http: [
+        "https://rpc1mainnet.qie.digital",
+        "https://rpc2mainnet.qie.digital",
+        "https://rpc3mainnet.qie.digital",
+        "https://rpc4mainnet.qie.digital",
+        "https://rpc5mainnet.qie.digital",
+      ],
+    },
+  },
   blockExplorers: { default: { name: "QIE Explorer", url: "https://mainnet.qie.digital" } },
 });
 
+/** One RPC when overridden, otherwise every RPC of the chain in order, failing over on errors. */
+export function rpcTransport(chain: Chain, rpcUrl?: string): Transport {
+  if (rpcUrl) return http(rpcUrl);
+  const urls = chain.rpcUrls.default.http;
+  return urls.length === 1 ? http(urls[0]) : fallback(urls.map((u) => http(u, { timeout: 10_000 })));
+}
+
 export interface ViemLedgerOptions {
   chain: Chain;
+  /** Overrides the chain's RPC list (no failover). */
   rpcUrl?: string;
   gameAddress: Address;
   operatorKey: Hex;
@@ -39,6 +60,9 @@ export interface ViemLedgerOptions {
   /** Top a player up to `dripAmount` when their balance is below `minBalance` (wei). */
   minBalance: bigint;
   dripAmount: bigint;
+  /** Most wei one player can receive per UTC day, and the most all players together can (abuse guard). */
+  dripDailyCapPerPlayer?: bigint;
+  dripDailyBudget?: bigint;
   /** How often to poll for receipts (ms). Default 1000. */
   pollingMs?: number;
   /** Called once a game is finalized or cancelled on-chain (to mark it settled in the store). */
@@ -70,9 +94,14 @@ export class ViemLedger implements GameLedger {
   private readonly gameQueues = new Map<Hex, SerialQueue>();
   private readonly failed = new Set<Hex>();
   private readonly pending = new Set<Promise<unknown>>();
+  private readonly transport: Transport;
+  private dripDay = "";
+  private readonly drippedToday = new Map<Address, bigint>();
+  private drippedTotalToday = 0n;
 
   constructor(private readonly o: ViemLedgerOptions) {
-    this.publicClient = createPublicClient({ chain: o.chain, transport: http(o.rpcUrl), pollingInterval: o.pollingMs ?? 1000 }) as PublicClient;
+    this.transport = rpcTransport(o.chain, o.rpcUrl);
+    this.publicClient = createPublicClient({ chain: o.chain, transport: this.transport, pollingInterval: o.pollingMs ?? 1000 }) as PublicClient;
     this.operator = privateKeyToAccount(o.operatorKey);
   }
 
@@ -169,7 +198,7 @@ export class ViemLedger implements GameLedger {
   }
 
   private async send(account: Account, functionName: string, args: readonly unknown[]): Promise<Hex> {
-    const wallet = createWalletClient({ account, chain: this.o.chain, transport: http(this.o.rpcUrl) });
+    const wallet = createWalletClient({ account, chain: this.o.chain, transport: this.transport });
     // Simulate first so a revert surfaces with its custom error instead of burning gas.
     const { request } = await this.publicClient.simulateContract({
       account,
@@ -194,11 +223,32 @@ export class ViemLedger implements GameLedger {
     return this.send(account, functionName, args);
   }
 
+  /** Reserve today's drip allowance for `to`, or throw when a cap would be exceeded. */
+  private reserveDrip(to: Address, wei: bigint) {
+    const day = new Date().toISOString().slice(0, 10);
+    if (day !== this.dripDay) {
+      this.dripDay = day;
+      this.drippedToday.clear();
+      this.drippedTotalToday = 0n;
+    }
+    const mine = (this.drippedToday.get(to) ?? 0n) + wei;
+    const total = this.drippedTotalToday + wei;
+    if (this.o.dripDailyCapPerPlayer !== undefined && mine > this.o.dripDailyCapPerPlayer) {
+      throw new Error(`gas drip refused: ${to} reached its daily cap`);
+    }
+    if (this.o.dripDailyBudget !== undefined && total > this.o.dripDailyBudget) {
+      throw new Error("gas drip refused: daily gas budget used up");
+    }
+    this.drippedToday.set(to, mine);
+    this.drippedTotalToday = total;
+  }
+
   private async drip(to: Address) {
     const balance = await this.publicClient.getBalance({ address: to });
     if (balance >= this.o.minBalance) return;
+    this.reserveDrip(to, this.o.dripAmount - balance);
     await this.operatorQueue.run(async () => {
-      const wallet = createWalletClient({ account: this.operator, chain: this.o.chain, transport: http(this.o.rpcUrl) });
+      const wallet = createWalletClient({ account: this.operator, chain: this.o.chain, transport: this.transport });
       const hash = await wallet.sendTransaction({ to, value: this.o.dripAmount - balance, chain: this.o.chain });
       await this.publicClient.waitForTransactionReceipt({ hash });
       this.o.log?.({ event: "gas_drip", to, wei: (this.o.dripAmount - balance).toString(), hash });
