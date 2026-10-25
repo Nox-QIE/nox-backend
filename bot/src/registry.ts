@@ -16,6 +16,14 @@ export class Registry {
     for (const id of deps.store?.startedUsers() ?? []) this.startedUsers.add(id);
   }
 
+  /** Forget a player (not while they are in a game). Returns false when they are mid-game. */
+  forgetUser(userId: number): boolean {
+    if (this.byUser.has(userId)) return false;
+    this.startedUsers.delete(userId);
+    this.deps.store?.forgetUser(userId);
+    return true;
+  }
+
   markStarted(userId: number) {
     if (this.startedUsers.has(userId)) return;
     this.startedUsers.add(userId);

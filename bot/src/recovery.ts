@@ -13,7 +13,12 @@ const NONE = 0;
  * and buttons are gone): a game that had ended gets its finalize retried, a game still running is
  * cancelled on-chain and its group is told.
  */
+/** Secrets of settled games are kept this long (for support questions), then deleted. */
+export const SECRET_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
 export async function recoverGames(store: Store, ledger: GameLedger, messenger: Messenger, log: (l: Record<string, unknown>) => void) {
+  const purged = store.purgeSettledSecrets(Date.now() - SECRET_RETENTION_MS);
+  if (purged) log({ event: "secrets_purged", games: purged });
   if (!ledger.enabled) return;
   for (const g of store.unsettledGames()) {
     try {

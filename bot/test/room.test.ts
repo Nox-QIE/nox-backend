@@ -158,3 +158,13 @@ describe("full game", () => {
     expect(await room.wolfChat(nonWolf, "hi")).toBe(false);
   });
 });
+
+describe("forget", () => {
+  it("refuses while the player is in a game and works after", async () => {
+    const { registry } = setup();
+    await registry.create(CHAT, 11, "Ava", "en");
+    expect(registry.forgetUser(11)).toBe(false);
+    expect(registry.forgetUser(99)).toBe(true);
+    expect(registry.startedUsers.has(99)).toBe(false);
+  });
+});
