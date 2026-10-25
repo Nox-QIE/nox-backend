@@ -1,0 +1,17 @@
+{
+  "name": "nox-backend",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "bot"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p bot --noEmit",
+    "dev:bot": "npm run dev -w @nox/bot"
+  },
+  "devDependencies": {
+    "typescript": "5.9",
+    "vitest": "^3.2.7"
+  }
+}

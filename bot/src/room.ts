@@ -1,0 +1,310 @@
+import {
+  apply,
+  assignRoles,
+  createGame,
+  GameRuleError,
+  MAX_PLAYERS,
+  MIN_PLAYERS,
+  publicView,
+  type Command,
+  type GameEvent,
+  type GameState,
+  type Role,
+  type RoleAssignment,
+} from "@nox/shared/engine";
+import { esc, roleName, T, type Lang } from "./i18n.js";
+import type { Narrator } from "./narrator.js";
+import type { Keyboard, Messenger, Scheduler, Timings } from "./ports.js";
+
+export type RoomStatus = "lobby" | "running" | "ended" | "cancelled";
+
+export interface RoomDeps {
+  messenger: Messenger;
+  narrator: Narrator;
+  scheduler: Scheduler;
+  timings: Timings;
+  /** CSPRNG-backed integer in [0, maxExclusive). */
+  randomInt: (maxExclusive: number) => number;
+  botUsername: string;
+  /** Called once the room ends or is cancelled, so the registry can forget it. */
+  onClosed: (room: GameRoom) => void;
+}
+
+export interface Reply {
+  ok: boolean;
+  text?: string;
+}
+
+const NIGHT_ROLES: ReadonlySet<Role> = new Set<Role>(["werewolf", "seer", "doctor"]);
+
+/** One game in one Telegram group, from lobby to the end. All mutations run through a queue. */
+export class GameRoom {
+  status: RoomStatus = "lobby";
+  /** Join order = seat order. */
+  readonly players = new Map<number, string>();
+  private state: GameState | null = null;
+  private readonly events: GameEvent[] = [];
+  private readonly commands: Command[] = [];
+  private assignments: RoleAssignment[] = [];
+  private lobbyMessageId: number | null = null;
+  private cancelTimer: (() => void) | null = null;
+  private phaseStep: "night" | "discussion" | "vote" | null = null;
+  private queue: Promise<unknown> = Promise.resolve();
+  private readonly t;
+
+  constructor(
+    readonly id: string,
+    readonly chatId: number,
+    readonly hostId: number,
+    hostName: string,
+    readonly lang: Lang,
+    private readonly deps: RoomDeps,
+  ) {
+    this.t = T[lang];
+    this.players.set(hostId, hostName);
+  }
+
+  /** Commands and assignment so far — enough to replay the game with @nox/shared/engine. */
+  get log() {
+    return { assignments: [...this.assignments], commands: [...this.commands] };
+  }
+
+  roleOf(userId: number): Role | null {
+    return this.state?.players[String(userId)]?.role ?? null;
+  }
+
+  isAlive(userId: number): boolean {
+    return this.state?.players[String(userId)]?.alive ?? false;
+  }
+
+  private run<R>(fn: () => Promise<R>): Promise<R> {
+    const next = this.queue.then(fn, fn);
+    this.queue = next.catch(() => undefined);
+    return next;
+  }
+
+  private name(userId: number | string): string {
+    return esc(this.players.get(Number(userId)) ?? String(userId));
+  }
+
+  private schedule(ms: number, fn: () => Promise<void>) {
+    this.cancelTimer?.();
+    this.cancelTimer = this.deps.scheduler.schedule(ms, () => void this.run(fn));
+  }
+
+  // ---------- lobby ----------
+
+  open(): Promise<void> {
+    return this.run(async () => {
+      this.lobbyMessageId = await this.deps.messenger.sendGroup(this.chatId, this.lobbyText(), this.lobbyKeyboard());
+      this.schedule(this.deps.timings.lobbyMs, () => this.lobbyTimeout());
+    });
+  }
+
+  private lobbyText() {
+    return this.t.lobby(this.name(this.hostId), [...this.players.keys()].map((id) => this.name(id)), MIN_PLAYERS, MAX_PLAYERS, Math.round(this.deps.timings.lobbyMs / 1000));
+  }
+
+  private lobbyKeyboard(): Keyboard {
+    return [[{ text: this.t.joinBtn, data: `j:${this.id}` }, { text: this.t.startBtn, data: `s:${this.id}` }]];
+  }
+
+  join(userId: number, displayName: string): Promise<Reply> {
+    return this.run(async () => {
+      if (this.status !== "lobby") return { ok: false, text: this.t.notLobby };
+      if (this.players.has(userId)) return { ok: false, text: this.t.alreadyIn };
+      if (this.players.size >= MAX_PLAYERS) return { ok: false, text: this.t.lobbyFull };
+      this.players.set(userId, displayName);
+      if (this.lobbyMessageId !== null) {
+        await this.deps.messenger.editGroup(this.chatId, this.lobbyMessageId, this.lobbyText(), this.lobbyKeyboard());
+      }
+      return { ok: true, text: this.t.joined(esc(displayName)) };
+    });
+  }
+
+  start(userId: number): Promise<Reply> {
+    return this.run(async () => {
+      if (this.status !== "lobby") return { ok: false, text: this.t.notLobby };
+      if (userId !== this.hostId) return { ok: false, text: this.t.onlyHost };
+      if (this.players.size < MIN_PLAYERS) return { ok: false, text: this.t.needMore(MIN_PLAYERS) };
+      await this.begin();
+      return { ok: true };
+    });
+  }
+
+  private async lobbyTimeout() {
+    if (this.status !== "lobby") return;
+    if (this.players.size >= MIN_PLAYERS) return this.begin();
+    this.status = "cancelled";
+    await this.deps.messenger.sendGroup(this.chatId, this.t.cancelled(MIN_PLAYERS));
+    this.deps.onClosed(this);
+  }
+
+  // ---------- game ----------
+
+  private async begin() {
+    this.cancelTimer?.();
+    this.status = "running";
+    const ids = [...this.players.keys()].map(String);
+    this.assignments = assignRoles(ids, this.deps.randomInt);
+    const created = createGame(this.assignments);
+    this.state = created.state;
+    this.events.push(...created.events);
+
+    const wolves = this.assignments.filter((a) => a.role === "werewolf").map((a) => a.id);
+    for (const a of this.assignments) {
+      const mates = a.role === "werewolf" ? wolves.filter((w) => w !== a.id).map((w) => this.name(w)) : [];
+      await this.deps.messenger.sendDM(Number(a.id), this.t.yourRole(roleName(this.lang, a.role), mates));
+    }
+
+    const view = publicView(this.state, this.events);
+    await this.deps.messenger.sendGroup(this.chatId, await this.deps.narrator.intro(view, ids.map((id) => this.name(id))));
+    await this.startNight();
+  }
+
+  private exec(cmd: Command): GameEvent[] {
+    const t = apply(this.state!, cmd);
+    this.state = t.state;
+    this.events.push(...t.events);
+    this.commands.push(cmd);
+    return t.events;
+  }
+
+  private async startNight() {
+    this.phaseStep = "night";
+    const state = this.state!;
+    await this.deps.messenger.sendGroup(this.chatId, await this.deps.narrator.nightFalls(publicView(state, this.events)));
+    const alive = state.seats.filter((id) => state.players[id]!.alive);
+    for (const id of alive) {
+      const role = state.players[id]!.role;
+      if (!NIGHT_ROLES.has(role)) continue;
+      const targets = alive.filter((t) => {
+        if (role === "werewolf") return state.players[t]!.role !== "werewolf";
+        if (role === "seer") return t !== id;
+        return true;
+      });
+      const prompt = role === "werewolf" ? this.t.pickKill : role === "seer" ? this.t.pickInspect : this.t.pickProtect;
+      await this.deps.messenger.sendDM(Number(id), prompt, this.targetKeyboard("n", targets));
+    }
+    this.schedule(this.deps.timings.nightMs, () => this.endNight());
+  }
+
+  /** Buttons carry the round so a button from an earlier night or day is rejected as stale. */
+  private targetKeyboard(prefix: "n" | "v", targets: string[]): Keyboard {
+    const round = this.state!.round;
+    return targets.map((t) => [{ text: this.players.get(Number(t)) ?? t, data: `${prefix}:${this.id}:${round}:${t}` }]);
+  }
+
+  private isStale(step: "night" | "vote", round: number) {
+    return this.status !== "running" || this.phaseStep !== step || this.state!.round !== round;
+  }
+
+  nightAction(userId: number, round: number, targetId: string): Promise<Reply> {
+    return this.run(async () => {
+      if (this.isStale("night", round)) return { ok: false, text: this.t.stale };
+      try {
+        this.exec({ type: "night_action", actor: String(userId), target: targetId });
+      } catch (e) {
+        if (e instanceof GameRuleError) return { ok: false, text: this.t.noPermission };
+        throw e;
+      }
+      const reply = { ok: true, text: this.t.actionOk(this.name(targetId)) };
+      if (this.allNightActionsIn()) await this.endNight();
+      return reply;
+    });
+  }
+
+  private allNightActionsIn(): boolean {
+    const s = this.state!;
+    return s.seats.every((id) => {
+      const p = s.players[id]!;
+      return !p.alive || !NIGHT_ROLES.has(p.role) || Boolean(s.nightActions[id]);
+    });
+  }
+
+  private async endNight() {
+    if (this.phaseStep !== "night") return;
+    this.cancelTimer?.();
+    this.phaseStep = null;
+    const evs = this.exec({ type: "end_night" });
+    for (const e of evs) {
+      if (e.type === "inspection_result") {
+        await this.deps.messenger.sendDM(Number(e.seer), this.t.inspection(this.name(e.target), e.isWerewolf));
+      }
+    }
+    const resolved = evs.find((e) => e.type === "night_resolved");
+    if (resolved?.type === "night_resolved") {
+      const name = resolved.eliminated ? this.name(resolved.eliminated) : null;
+      await this.deps.messenger.sendGroup(this.chatId, await this.deps.narrator.morning(publicView(this.state!, this.events), name, resolved.revealedRole));
+    }
+    if (await this.finishIfEnded(evs)) return;
+    this.phaseStep = "discussion";
+    await this.deps.messenger.sendGroup(this.chatId, this.t.discussion(Math.round(this.deps.timings.discussionMs / 1000)));
+    this.schedule(this.deps.timings.discussionMs, () => this.openVote());
+  }
+
+  private async openVote() {
+    if (this.phaseStep !== "discussion") return;
+    this.phaseStep = "vote";
+    const s = this.state!;
+    const alive = s.seats.filter((id) => s.players[id]!.alive);
+    await this.deps.messenger.sendGroup(this.chatId, this.t.voteOpen(Math.round(this.deps.timings.voteMs / 1000)), this.targetKeyboard("v", alive));
+    this.schedule(this.deps.timings.voteMs, () => this.endDay());
+  }
+
+  vote(userId: number, round: number, targetId: string): Promise<Reply> {
+    return this.run(async () => {
+      if (this.isStale("vote", round)) return { ok: false, text: this.t.stale };
+      try {
+        this.exec({ type: "vote", voter: String(userId), target: targetId });
+      } catch (e) {
+        if (e instanceof GameRuleError) return { ok: false, text: this.t.noPermission };
+        throw e;
+      }
+      await this.deps.messenger.sendGroup(this.chatId, this.t.voted(this.name(userId), this.name(targetId)));
+      const s = this.state!;
+      const aliveCount = s.seats.filter((id) => s.players[id]!.alive).length;
+      if (Object.keys(s.votes).length >= aliveCount) await this.endDay();
+      return { ok: true, text: this.t.voteOk(this.name(targetId)) };
+    });
+  }
+
+  private async endDay() {
+    if (this.phaseStep !== "vote") return;
+    this.cancelTimer?.();
+    this.phaseStep = null;
+    const evs = this.exec({ type: "end_day" });
+    const resolved = evs.find((e) => e.type === "day_resolved");
+    if (resolved?.type === "day_resolved") {
+      const name = resolved.eliminated ? this.name(resolved.eliminated) : null;
+      await this.deps.messenger.sendGroup(this.chatId, await this.deps.narrator.dayResult(publicView(this.state!, this.events), name, resolved.revealedRole));
+    }
+    if (await this.finishIfEnded(evs)) return;
+    await this.startNight();
+  }
+
+  private async finishIfEnded(evs: GameEvent[]): Promise<boolean> {
+    const ended = evs.find((e) => e.type === "game_ended");
+    if (ended?.type !== "game_ended") return false;
+    this.status = "ended";
+    this.phaseStep = null;
+    this.cancelTimer?.();
+    const roster = this.state!.seats.map((id) => ({ name: this.name(id), role: ended.roles[id]! }));
+    await this.deps.messenger.sendGroup(this.chatId, await this.deps.narrator.gameOver(ended.winner, roster));
+    this.deps.onClosed(this);
+    return true;
+  }
+
+  /** Relay a DM from a living werewolf to the other living werewolves during the night. */
+  wolfChat(userId: number, text: string): Promise<boolean> {
+    return this.run(async () => {
+      const s = this.state;
+      if (!s || this.phaseStep !== "night") return false;
+      const me = s.players[String(userId)];
+      if (!me?.alive || me.role !== "werewolf") return false;
+      const others = s.seats.filter((id) => id !== String(userId) && s.players[id]!.alive && s.players[id]!.role === "werewolf");
+      for (const id of others) await this.deps.messenger.sendDM(Number(id), this.t.wolfMsg(this.name(userId), esc(text)));
+      return true;
+    });
+  }
+}
