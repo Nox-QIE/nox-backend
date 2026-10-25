@@ -37,6 +37,7 @@ type Dict = {
   gameExists: string;
   groupOnly: string;
   yourRole: (role: string, wolves: string[]) => string;
+  roleProof: (salt: string) => string;
   pickKill: string;
   pickInspect: string;
   pickProtect: string;
@@ -72,6 +73,7 @@ export const T: Record<Lang, Dict> = {
     groupOnly: "Perintah ini hanya untuk grup.",
     yourRole: (role, wolves) =>
       `Peranmu: <b>${role}</b>` + (wolves.length ? `\nSesama werewolf: ${wolves.join(", ")}\nPesan yang kamu kirim ke bot saat malam diteruskan ke sesama werewolf.` : ""),
+    roleProof: (salt) => `🔐 Peranmu sudah dikunci di blockchain QIE sebelum dibagikan. Simpan kode ini untuk membuktikannya di akhir game:\n<code>${salt}</code>`,
     pickKill: "🌙 Pilih korban malam ini:",
     pickInspect: "🌙 Pilih pemain yang ingin kamu selidiki:",
     pickProtect: "🌙 Pilih pemain yang ingin kamu lindungi:",
@@ -105,6 +107,7 @@ export const T: Record<Lang, Dict> = {
     groupOnly: "This command only works in groups.",
     yourRole: (role, wolves) =>
       `Your role: <b>${role}</b>` + (wolves.length ? `\nFellow werewolves: ${wolves.join(", ")}\nMessages you send to the bot at night are relayed to them.` : ""),
+    roleProof: (salt) => `🔐 Your role was locked on the QIE blockchain before it was dealt. Keep this code to verify it after the game:\n<code>${salt}</code>`,
     pickKill: "🌙 Choose tonight's victim:",
     pickInspect: "🌙 Choose a player to investigate:",
     pickProtect: "🌙 Choose a player to protect:",
