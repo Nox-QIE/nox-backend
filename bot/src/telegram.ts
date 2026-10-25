@@ -1,9 +1,8 @@
 import { Bot, GrammyError, InlineKeyboard } from "grammy";
 import { randomInt } from "node:crypto";
 import { langFrom, T } from "./i18n.js";
-import { defineChain } from "viem";
 import { noLedger, type GameLedger } from "./chain/ledger.js";
-import { qieMainnet, qieTestnet, ViemLedger } from "./chain/viem-ledger.js";
+import { chainFor, ViemLedger } from "./chain/viem-ledger.js";
 import { PlayerWallets } from "./chain/wallets.js";
 import type { ChainConfig, Config, GmConfig } from "./config.js";
 import { recoverGames } from "./recovery.js";
@@ -81,19 +80,14 @@ export function buildGmPool(gm: GmConfig): GmModelPool {
   return new GmModelPool(entries, (max) => randomInt(max));
 }
 
-const anvil = defineChain({
-  id: 31337,
-  name: "Anvil",
-  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-  rpcUrls: { default: { http: ["http://127.0.0.1:8545"] } },
-});
+
 
 const logLine = (l: Record<string, unknown>) => console.log(JSON.stringify(l));
 
 export function buildLedger(c: ChainConfig, log = logLine, store?: Store): GameLedger {
   if (c.network === "off") return noLedger;
   return new ViemLedger({
-    chain: c.network === "mainnet" ? qieMainnet : c.network === "testnet" ? qieTestnet : anvil,
+    chain: chainFor(c.network),
     ...(c.rpcUrl ? { rpcUrl: c.rpcUrl } : {}),
     gameAddress: c.gameAddress!,
     operatorKey: c.operatorKey!,

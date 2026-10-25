@@ -25,6 +25,11 @@ export interface ChainConfig {
   network: "off" | "local" | "testnet" | "mainnet";
   rpcUrl?: string;
   gameAddress?: `0x${string}`;
+  /** Agent Marketplace contracts (needed by the operator scripts for registration and settlement). */
+  agentRegistryAddress?: `0x${string}`;
+  paymentsAddress?: `0x${string}`;
+  /** First block to scan for payment events. */
+  paymentsFromBlock: bigint;
   operatorKey?: `0x${string}`;
   walletSecret?: string;
   /** Gas drip in wei: top a player up to dripWei when below minWei. */
@@ -140,7 +145,14 @@ export function loadChainConfig(env: NodeJS.ProcessEnv = process.env): ChainConf
     minWei: qieToWei(env.NOX_GAS_MIN || "0.0005", "NOX_GAS_MIN"),
     dailyPerPlayerWei: qieToWei(env.NOX_GAS_DAILY_PER_PLAYER || "0.01", "NOX_GAS_DAILY_PER_PLAYER"),
     dailyBudgetWei: qieToWei(env.NOX_GAS_DAILY_BUDGET || "5", "NOX_GAS_DAILY_BUDGET"),
+    paymentsFromBlock: BigInt(env.NOX_PAYMENTS_FROM_BLOCK || 0),
   };
+  for (const [key, field] of [["NOX_AGENT_REGISTRY_ADDRESS", "agentRegistryAddress"], ["NOX_PAYMENTS_ADDRESS", "paymentsAddress"]] as const) {
+    const v = env[key];
+    if (!v) continue;
+    if (!/^0x[0-9a-fA-F]{40}$/.test(v)) throw new Error(`${key} must be a contract address`);
+    c[field] = v as `0x${string}`;
+  }
   if (c.network === "off") return c;
   if (env.NOX_RPC_URL) c.rpcUrl = env.NOX_RPC_URL;
   else if (c.network === "local") c.rpcUrl = "http://127.0.0.1:8545";

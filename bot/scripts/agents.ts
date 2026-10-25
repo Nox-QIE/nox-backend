@@ -4,10 +4,13 @@
  *   node --env-file=.env --import tsx bot/scripts/agents.ts list
  *   node --env-file=.env --import tsx bot/scripts/agents.ts suspend|activate <id>
  *   node --env-file=.env --import tsx bot/scripts/agents.ts usage <YYYY-MM>
+ *   node --env-file=.env --import tsx bot/scripts/agents.ts register <id>   (NoxAgentRegistry, operator key)
  * `add` runs the automatic persona checks; review the text yourself before adding (moderation).
  */
 import { readFileSync } from "node:fs";
 import { checkPersona, isAddress, type Persona } from "../src/agents.js";
+import { operatorFrom, registerAgentOnChain } from "../src/chain/operator.js";
+import { loadChainConfig } from "../src/config.js";
 import { SqliteStore } from "../src/store.js";
 
 const store = new SqliteStore(process.env.NOX_DB_PATH || "data/nox.db");
@@ -43,6 +46,17 @@ switch (cmd) {
     for (const u of store.agentUsage(from, to)) console.log(`#${u.agentId}: ${u.games} games, ${u.players} player seats`);
     break;
   }
+  case "register": {
+    const agent = store.getAgent(Number(a));
+    if (!agent) throw new Error(`no agent #${a}`);
+    if (agent.chainAgentId) throw new Error(`agent #${a} is already registered on-chain as #${agent.chainAgentId}`);
+    const c = loadChainConfig();
+    if (!c.agentRegistryAddress) throw new Error("set NOX_AGENT_REGISTRY_ADDRESS");
+    const chainId = await registerAgentOnChain(operatorFrom(c), c.agentRegistryAddress, agent.owner as `0x${string}`, agent.persona);
+    store.setChainAgentId(agent.id, chainId);
+    console.log(`Agent #${agent.id} registered on-chain as #${chainId}.`);
+    break;
+  }
   default:
-    console.log("commands: add <owner> <persona.json> | list | suspend <id> | activate <id> | usage <YYYY-MM>");
+    console.log("commands: add <owner> <persona.json> | list | suspend <id> | activate <id> | usage <YYYY-MM> | register <id>");
 }

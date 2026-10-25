@@ -2,7 +2,18 @@ import { execSync, spawn, type ChildProcess } from "node:child_process";
 import { createPublicClient, createWalletClient, defineChain, http, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { NoxCreditsAbi, NoxCreditsBytecode, NoxGameAbi, NoxGameBytecode } from "../src/chain/contracts.js";
+import {
+  NoxAgentRegistryAbi,
+  NoxAgentRegistryBytecode,
+  NoxCreditsAbi,
+  NoxCreditsBytecode,
+  NoxGameAbi,
+  NoxGameBytecode,
+  NoxPaymentsAbi,
+  NoxPaymentsBytecode,
+} from "../src/chain/contracts.js";
+import { operatorFrom, registerAgentOnChain } from "../src/chain/operator.js";
+import { settleMonth } from "../src/chain/settle.js";
 import { rpcTransport, ViemLedger } from "../src/chain/viem-ledger.js";
 import { PlayerWallets } from "../src/chain/wallets.js";
 import { TemplateNarrator } from "../src/narrator.js";
@@ -241,5 +252,41 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     expect(logs.some((l) => l.event === "chain_error" && String(l.error).includes("daily gas budget"))).toBe(true);
     expect(await ledger.statusOf(room.gameId!)).toBe(4); // cancelled, not left running
     expect(room.status).toBe("running"); // the Telegram game itself goes on
+  }, 60_000);
+
+  it("settles the agent pool: registered agent, pass revenue, valid games, allocation, owner withdrawal", async () => {
+    const operator = privateKeyToAccount(OPERATOR_KEY);
+    const wallet = createWalletClient({ account: operator, chain, transport: http(RPC) });
+    const deploy = async (abi: never, bytecode: Hex, args: unknown[]) =>
+      (await publicClient.waitForTransactionReceipt({ hash: await wallet.deployContract({ abi, bytecode, args: args as never }) })).contractAddress!;
+    const registry = await deploy(NoxAgentRegistryAbi as never, NoxAgentRegistryBytecode, [operator.address, operator.address]);
+    const payments = await deploy(NoxPaymentsAbi as never, NoxPaymentsBytecode, [operator.address, operator.address, registry]);
+    await publicClient.waitForTransactionReceipt({
+      hash: await wallet.writeContract({ address: payments, abi: NoxPaymentsAbi, functionName: "configurePass", args: [1, "0x0000000000000000000000000000000000000000", 10n ** 18n, 30n * 86400n] }),
+    });
+
+    // A host buys 4 periods of Host Pass with QIE (anvil dev account #1).
+    const host = privateKeyToAccount("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
+    const hostWallet = createWalletClient({ account: host, chain, transport: http(RPC) });
+    await publicClient.waitForTransactionReceipt({
+      hash: await hostWallet.writeContract({ address: payments, abi: NoxPaymentsAbi, functionName: "buyPass", args: [1, 4, "0x0000000000000000000000000000000000000000"], value: 4n * 10n ** 18n }),
+    });
+
+    const store = new SqliteStore(":memory:");
+    const owner = "0x00000000000000000000000000000000000a9e01" as const;
+    const agentId = store.addAgent(owner, { name: "Noir", tagline: "", style: "x".repeat(50), examples: [], langs: ["en"] });
+    const op = operatorFrom({ network: "local", rpcUrl: RPC, operatorKey: OPERATOR_KEY, dripWei: 0n, minWei: 0n, dailyPerPlayerWei: 0n, dailyBudgetWei: 0n, paymentsFromBlock: 0n }, 50);
+    store.setChainAgentId(agentId, await registerAgentOnChain(op, registry, owner, store.getAgent(agentId)!.persona));
+    for (const a of [agentId, agentId, agentId, null]) store.recordFinishedGame({ agentId: a, players: 6, hostId: 1, chainGameId: null });
+
+    const month = new Date().toISOString().slice(0, 7);
+    const r = await settleMonth(store, op, { registry, payments }, month, "0x0000000000000000000000000000000000000000", true);
+    expect(r.revenue).toBe(4n * 10n ** 18n);
+    expect(r.payouts).toEqual([{ agentId, validGames: 3, amount: 9n * 10n ** 17n }]); // 4 QIE x 30% x 3/4
+    expect(r.tx).toMatch(/^0x/);
+    const owed = await publicClient.readContract({ address: payments, abi: NoxPaymentsAbi, functionName: "ownerBalance", args: [owner, "0x0000000000000000000000000000000000000000"] });
+    expect(owed).toBe(9n * 10n ** 17n);
+    // Settling the same month again is refused by the contract.
+    await expect(settleMonth(store, op, { registry, payments }, month, "0x0000000000000000000000000000000000000000", true)).rejects.toThrow();
   }, 60_000);
 });

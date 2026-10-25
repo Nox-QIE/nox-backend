@@ -43,6 +43,17 @@ export const qieMainnet: Chain = defineChain({
   blockExplorers: { default: { name: "QIE Explorer", url: "https://mainnet.qie.digital" } },
 });
 
+export const anvilChain: Chain = defineChain({
+  id: 31337,
+  name: "Anvil",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: { default: { http: ["http://127.0.0.1:8545"] } },
+});
+
+export function chainFor(network: "local" | "testnet" | "mainnet"): Chain {
+  return network === "mainnet" ? qieMainnet : network === "testnet" ? qieTestnet : anvilChain;
+}
+
 /** One RPC when overridden, otherwise every RPC of the chain in order, failing over on errors. */
 export function rpcTransport(chain: Chain, rpcUrl?: string): Transport {
   if (rpcUrl) return http(rpcUrl);
