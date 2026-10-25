@@ -6,13 +6,13 @@
 import type { PublicView } from "@nox/shared/engine";
 import { loadGmConfig } from "../src/config.js";
 import { LlmNarrator } from "../src/gm/llm-narrator.js";
-import { createGmModel } from "../src/gm/model.js";
+import { buildGmPool } from "../src/telegram.js";
 
 const gm = { ...loadGmConfig(), mode: "llm" as const };
 const lang = process.env.NOX_GM_SAMPLE_LANG === "en" ? "en" : "id";
 const lines: Record<string, unknown>[] = [];
 const n = new LlmNarrator({
-  model: createGmModel(gm),
+  model: buildGmPool(gm).forGame(),
   lang,
   timeoutMs: gm.timeoutMs,
   log: (l) => lines.push(l),

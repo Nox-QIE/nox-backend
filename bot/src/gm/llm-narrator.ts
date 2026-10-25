@@ -20,7 +20,17 @@ export interface GmStats {
   fallbacks: number;
   rejected: Record<string, number>;
   usage: GmUsage;
+  /** Usage per "provider:model" that actually served a call (differs from the primary on failover). */
+  byModel: Record<string, GmUsage>;
 }
+
+const emptyUsage = (): GmUsage => ({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
+const addUsage = (to: GmUsage, u: GmUsage) => {
+  to.inputTokens += u.inputTokens;
+  to.outputTokens += u.outputTokens;
+  to.cacheReadTokens += u.cacheReadTokens;
+  to.cacheWriteTokens += u.cacheWriteTokens;
+};
 
 /**
  * AI Game Master. Each beat = one short LLM "flavor" line followed by the template's factual line,
@@ -38,7 +48,8 @@ export class LlmNarrator implements Narrator {
     failures: 0,
     fallbacks: 0,
     rejected: {},
-    usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    usage: emptyUsage(),
+    byModel: {},
   };
 
   constructor(private readonly opts: LlmNarratorOptions) {
@@ -52,11 +63,8 @@ export class LlmNarrator implements Narrator {
       this.stats.calls++;
       try {
         const r = await this.opts.model.complete(this.system, userPrompt(beat), this.opts.timeoutMs);
-        const u = this.stats.usage;
-        u.inputTokens += r.usage.inputTokens;
-        u.outputTokens += r.usage.outputTokens;
-        u.cacheReadTokens += r.usage.cacheReadTokens;
-        u.cacheWriteTokens += r.usage.cacheWriteTokens;
+        addUsage(this.stats.usage, r.usage);
+        addUsage((this.stats.byModel[r.model] ??= emptyUsage()), r.usage);
         const g = checkNarration(r.text, forbidden);
         if (g.ok) return esc(g.text);
         this.stats.rejected[g.reason] = (this.stats.rejected[g.reason] ?? 0) + 1;
@@ -105,7 +113,11 @@ export class LlmNarrator implements Narrator {
   }
 
   finish() {
-    const cost = costUsd(this.opts.model.model, this.stats.usage, this.opts.price);
+    let cost: number | null = 0;
+    for (const [model, u] of Object.entries(this.stats.byModel)) {
+      const c = costUsd(model, u, this.opts.price);
+      cost = c === null || cost === null ? null : cost + c;
+    }
     this.opts.log?.({ event: "gm_usage", model: this.opts.model.model, ...this.stats, costUsd: cost });
   }
 }

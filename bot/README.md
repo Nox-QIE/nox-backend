@@ -49,7 +49,13 @@ Default `NOX_GM=template` (tanpa jaringan). Set `NOX_GM=llm` untuk narasi Claude
 | Claude API | `NOX_GM_PROVIDER=anthropic`, kredensial SDK (`ANTHROPIC_API_KEY` atau `ant auth login`) |
 | [Oxion AI](https://oxionai.com/docs) | `NOX_GM_PROVIDER=oxion`, `OXION_API_KEY=cc_…`, `NOX_GM_MODEL=<ID dari GET /v1/models>` |
 
-Model default `claude-opus-5-5`. Ganti lewat `NOX_GM_MODEL` (mis. `claude-haiku-5-5` jauh lebih murah) setelah ukur biaya.
+Model default `claude-opus-5-5`. Ganti lewat `NOX_GM_MODEL` setelah ukur biaya.
+
+**Pool model (variasi + cadangan):** `NOX_GM_MODELS=oxion:claude-opus-5.5@2,oxion:claude-sonnet-5,anthropic:claude-opus-5-5`
+- Tiap game memilih satu model sesuai bobot (`@2` = 2x lebih sering), jadi gaya narasi beda antar game tapi konsisten dalam satu game.
+- Kalau model terpilih gagal, anggota pool lain dicoba berurutan; model yang gagal di-skip 60 detik (cooldown). Semua gagal → template.
+- `gm_usage` mencatat `model` (pilihan utama) dan `byModel` (token per model yang benar-benar melayani).
+- Isi `OXION_API_KEY` bila ada entri `oxion`, dan kredensial Anthropic bila ada entri `anthropic`.
 
 Desain anti-bocor:
 - Tiap beat = 1–3 kalimat **suasana** dari LLM + kalimat **fakta** dari template. Fakta (siapa mati, peran yang terungkap, pemenang) tidak pernah bergantung pada LLM.

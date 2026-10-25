@@ -13,5 +13,5 @@ const stop = () => void bot.stop();
 process.once("SIGINT", stop);
 process.once("SIGTERM", stop);
 
-console.log(`Nox bot @${bot.botInfo.username} running (long polling, GM: ${config.gm.mode === "llm" ? config.gm.model : "template"})`);
+console.log(`Nox bot @${bot.botInfo.username} running (long polling, GM: ${config.gm.mode === "llm" ? config.gm.pool.map((e) => `${e.provider}:${e.model}@${e.weight}`).join(", ") : "template"})`);
 await bot.start({ allowed_updates: ["message", "callback_query"] });

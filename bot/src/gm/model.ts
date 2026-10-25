@@ -104,8 +104,9 @@ const PRICES: Record<string, [number, number]> = {
 
 /** `price` overrides the built-in Claude API table, e.g. for a gateway with its own rates. */
 export function costUsd(model: string, u: GmUsage, price?: [number, number]): number | null {
-  // Gateways spell versions with dots (Oxion: "claude-opus-5.5"); the Claude API uses dashes.
-  const p = price ?? PRICES[model.replace(/\./g, "-")];
+  // Accept pool labels ("oxion:claude-opus-5.5"); gateways spell versions with dots, the Claude API with dashes.
+  const id = model.slice(model.lastIndexOf(":") + 1).replace(/\./g, "-");
+  const p = price ?? PRICES[id];
   if (!p) return null;
   const [inp, out] = p;
   return (u.inputTokens * inp + u.cacheReadTokens * inp * 0.1 + u.cacheWriteTokens * inp * 1.25 + u.outputTokens * out) / 1e6;

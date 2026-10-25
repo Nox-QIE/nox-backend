@@ -80,8 +80,7 @@ describe("GM config", () => {
   it("defaults to templates and Claude Opus 5.5", () => {
     const c = loadGmConfig({});
     expect(c.mode).toBe("template");
-    expect(c.provider).toBe("anthropic");
-    expect(c.model).toBe("claude-opus-5-5");
+    expect(c.pool).toEqual([{ provider: "anthropic", model: "claude-opus-5-5", weight: 1 }]);
   });
 
   it("requires OXION_API_KEY for the Oxion LLM mode and parses a price override", () => {
