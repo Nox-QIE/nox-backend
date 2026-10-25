@@ -84,6 +84,13 @@ node --env-file=.env --import tsx bot/scripts/gm-sample.ts
 
 Tiga tema Nox, ID/EN, memakai mekanisme persona yang sama tapi tanpa pemilik dan tanpa bagi hasil: **Horor Desa / Village Horror**, **Fantasi / High Fantasy**, **Kantor / Office Politics** (korban "resign", bukan mati). Pilih di tombol lobby, atau langsung `/newgame horor|fantasi|kantor` (juga `horror|fantasy|office`). Butuh `NOX_GM=llm`.
 
+## Scam Shield (F10)
+
+`/newgame scamshield` (juga `antipenipuan`, `tipu`, `scam`): aturan sama, dibungkus pola penipuan nyata supaya pemain belajar mengenalinya. Skenario 1: **misi berbayar** (task scam).
+- Peran: 🕵️ Penipu, 🔎 Analis Fraud, 🛡️ Teman Waspada, 📱 Calon Korban. Korban "kena tipu dan keluar dari grup", bukan mati.
+- Tiap pagi satu tanda bahaya (teks tetap, bukan AI). Akhir game: kartu debrief + kanal lapor resmi (IASC OJK, OJK 157, cekrekening.id, patrolisiber.id; dicek 25 Okt 2026). Bila grup menang, pemain non-penipu mendapat DM lencana **Scam Spotter**.
+- Jalan dengan narasi template maupun LLM (persona skenario). Guard tetap ketat: narasi tidak boleh berisi ajakan memindahkan uang.
+
 ## Agent Marketplace (F18): persona hosted
 
 Pemilik agent mengirim persona (nama, tagline, gaya narasi, maks 3 contoh, bahasa). Persona berjalan di LLM milik Nox; aturan GM, guard, dan kalimat fakta tetap berlaku, persona hanya mengubah gaya. Teks persona dikutip sebagai data (JSON, `<` di-escape) setelah aturan tetap.

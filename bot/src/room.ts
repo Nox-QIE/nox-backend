@@ -17,7 +17,8 @@ import type { Hex } from "viem";
 import { noLedger, type GameLedger, type LedgerNightReveal } from "./chain/ledger.js";
 import { esc, roleName, T, type Lang } from "./i18n.js";
 import type { AgentRecord, Persona } from "./agents.js";
-import type { Narrator } from "./narrator.js";
+import type { Narrator, Wording } from "./narrator.js";
+import type { Scenario, ScenarioText } from "./scenarios.js";
 import type { Keyboard, Messenger, Scheduler, Timings } from "./ports.js";
 import type { Store } from "./store.js";
 
@@ -26,7 +27,7 @@ export type RoomStatus = "lobby" | "running" | "ended" | "cancelled";
 export interface RoomDeps {
   messenger: Messenger;
   /** Builds the narrator for a game; a persona comes from the Agent Marketplace. */
-  narratorFor: (lang: Lang, persona?: Persona) => Narrator;
+  narratorFor: (lang: Lang, persona?: Persona, wording?: Wording) => Narrator;
   /** Active Marketplace agents the host can pick in the lobby (none = no picker). */
   agents?: () => AgentRecord[];
   scheduler: Scheduler;
@@ -72,6 +73,7 @@ export class GameRoom {
   private secrets = new Map<number, { salt: Hex; proof: Hex[] }>();
   private readonly nights: LedgerNightReveal[] = [];
   private narrator: Narrator;
+  private readonly sc: ScenarioText | null;
   /** Marketplace agent picked by the host (null = Nox's own Game Master). */
   agentId: number | null = null;
 
@@ -82,10 +84,13 @@ export class GameRoom {
     hostName: string,
     readonly lang: Lang,
     private readonly deps: RoomDeps,
+    /** Scam Shield scenario (F10): re-skins roles and facts, adds warning signs and a debrief. */
+    readonly scenario: Scenario | null = null,
   ) {
     this.t = T[lang];
     this.ledger = deps.ledger ?? noLedger;
-    this.narrator = deps.narratorFor(lang);
+    this.sc = scenario ? scenario.text[lang] : null;
+    this.narrator = this.sc ? deps.narratorFor(lang, this.sc.persona, this.sc.wording) : deps.narratorFor(lang);
     this.players.set(hostId, hostName);
   }
 
@@ -127,13 +132,15 @@ export class GameRoom {
   }
 
   private lobbyAgents(): AgentRecord[] {
+    if (this.sc) return []; // the scenario sets the Game Master's voice
     // Nox themes (negative ids) first, then at most 4 Marketplace agents.
     const all = (this.deps.agents?.() ?? []).filter((a) => a.persona.langs.includes(this.lang));
     return [...all.filter((a) => a.id < 0), ...all.filter((a) => a.id > 0).slice(0, 4)];
   }
 
   private lobbyText() {
-    const text = this.t.lobby(this.name(this.hostId), [...this.players.keys()].map((id) => this.name(id)), MIN_PLAYERS, MAX_PLAYERS, Math.round(this.deps.timings.lobbyMs / 1000));
+    let text = this.t.lobby(this.name(this.hostId), [...this.players.keys()].map((id) => this.name(id)), MIN_PLAYERS, MAX_PLAYERS, Math.round(this.deps.timings.lobbyMs / 1000));
+    if (this.sc) text = `🛡️ <b>${this.sc.title}</b>\n${text}`;
     if (!this.lobbyAgents().length) return text;
     const picked = this.lobbyAgents().find((a) => a.id === this.agentId);
     return `${text}\n${this.t.gmLine(picked ? `${esc(picked.persona.name)}${picked.persona.tagline ? ` (${esc(picked.persona.tagline)})` : ""}` : this.t.gmDefault)}`;
@@ -216,7 +223,7 @@ export class GameRoom {
     const wolves = this.assignments.filter((a) => a.role === "werewolf").map((a) => a.id);
     for (const a of this.assignments) {
       const mates = a.role === "werewolf" ? wolves.filter((w) => w !== a.id).map((w) => this.name(w)) : [];
-      let text = this.t.yourRole(roleName(this.lang, a.role), mates);
+      let text = this.t.yourRole(this.sc ? this.sc.roles[a.role] : roleName(this.lang, a.role), mates);
       const secret = this.secrets.get(Number(a.id));
       if (secret) text += `\n\n${this.t.roleProof(secret.salt)}`;
       await this.deps.messenger.sendDM(Number(a.id), text);
@@ -241,7 +248,7 @@ export class GameRoom {
     this.gameId = gameId;
     // Persist before anything goes on-chain: without the salts the game could never be revealed.
     this.deps.store?.saveGame(gameId, this.chatId, this.lang, { roles: this.roleReveals(), nights: [] });
-    const config = { players: this.assignments.length, timings: this.deps.timings, revealOnDeath: true, lang: this.lang };
+    const config = { players: this.assignments.length, timings: this.deps.timings, revealOnDeath: true, lang: this.lang, scenario: this.scenario?.key ?? null };
     this.ledger.startGame(gameId, configHash(config), this.assignments.map((a) => Number(a.id)), committed.root);
   }
 
@@ -336,6 +343,10 @@ export class GameRoom {
       await this.deps.messenger.sendGroup(this.chatId, await this.narrator.morning(publicView(this.state!, this.events), name, resolved.revealedRole));
     }
     if (await this.finishIfEnded(evs)) return;
+    if (this.sc) {
+      const hint = this.sc.hints[(this.state!.round - 1) % this.sc.hints.length]!;
+      await this.deps.messenger.sendGroup(this.chatId, hint);
+    }
     this.phaseStep = "discussion";
     await this.deps.messenger.sendGroup(this.chatId, this.t.discussion(Math.round(this.deps.timings.discussionMs / 1000)));
     this.schedule(this.deps.timings.discussionMs, () => this.openVote());
@@ -402,6 +413,12 @@ export class GameRoom {
     let over = await this.narrator.gameOver(ended.winner, roster);
     if (this.gameId && this.deps.webUrl) over += `\n\n${this.t.verifyLink(`${this.deps.webUrl.replace(/\/+$/, "")}/game/?id=${this.gameId}`)}`;
     await this.deps.messenger.sendGroup(this.chatId, over);
+    if (this.sc) {
+      await this.deps.messenger.sendGroup(this.chatId, this.sc.debrief);
+      if (ended.winner === "village") {
+        for (const a of this.assignments) if (a.role !== "werewolf") await this.deps.messenger.sendDM(Number(a.id), this.sc.spotterBadge);
+      }
+    }
     this.narrator.finish?.();
     this.deps.onClosed(this);
     return true;

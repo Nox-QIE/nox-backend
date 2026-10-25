@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { T, type Lang } from "./i18n.js";
 import { GameRoom, type Reply, type RoomDeps } from "./room.js";
+import type { Scenario } from "./scenarios.js";
 
 type Deps = Omit<RoomDeps, "onClosed">;
 
@@ -51,21 +52,29 @@ export class Registry {
     return this.rooms.get(roomId);
   }
 
-  /** `agentId` (e.g. a theme from "/newgame horor") is preselected in the lobby when available. */
-  async create(chatId: number, hostId: number, hostName: string, lang: Lang, agentId?: number): Promise<Reply> {
+  /**
+   * `agentId` (e.g. a theme from "/newgame horor") is preselected in the lobby when available;
+   * `scenario` starts a Scam Shield game ("/newgame scamshield").
+   */
+  async create(chatId: number, hostId: number, hostName: string, lang: Lang, opts: { agentId?: number; scenario?: Scenario } = {}): Promise<Reply> {
     const t = T[lang];
     if (this.byChat.has(chatId)) return { ok: false, text: t.gameExists };
     if (this.byUser.has(hostId)) return { ok: false, text: t.inOtherGame };
     if (!this.startedUsers.has(hostId)) return { ok: false, text: t.needStart(hostName, this.deps.botUsername) };
-    const room = new GameRoom(this.newId(), chatId, hostId, hostName, lang, {
-      ...this.deps,
-      onClosed: (r) => this.forget(r),
-    });
+    const room = new GameRoom(
+      this.newId(),
+      chatId,
+      hostId,
+      hostName,
+      lang,
+      { ...this.deps, onClosed: (r) => this.forget(r) },
+      opts.scenario ?? null,
+    );
     this.rooms.set(room.id, room);
     this.byChat.set(chatId, room.id);
     this.byUser.set(hostId, room.id);
     await room.open();
-    if (agentId !== undefined) await room.pickAgent(hostId, agentId);
+    if (opts.agentId !== undefined) await room.pickAgent(hostId, opts.agentId);
     return { ok: true };
   }
 
