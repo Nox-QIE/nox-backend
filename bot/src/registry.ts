@@ -10,10 +10,18 @@ export class Registry {
   private readonly rooms = new Map<string, GameRoom>();
   private readonly byChat = new Map<number, string>();
   private readonly byUser = new Map<number, string>();
-  /** Users who pressed Start (Telegram only lets bots DM them after that). */
+  /** Users who pressed Start (Telegram only lets bots DM them after that). Loaded from the store. */
   readonly startedUsers = new Set<number>();
 
-  constructor(private readonly deps: Deps) {}
+  constructor(private readonly deps: Deps) {
+    for (const id of deps.store?.startedUsers() ?? []) this.startedUsers.add(id);
+  }
+
+  markStarted(userId: number) {
+    if (this.startedUsers.has(userId)) return;
+    this.startedUsers.add(userId);
+    this.deps.store?.addStartedUser(userId);
+  }
 
   private newId(): string {
     let id: string;

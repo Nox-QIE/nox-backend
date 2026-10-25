@@ -6,7 +6,10 @@ import { NoxCreditsAbi, NoxCreditsBytecode, NoxGameAbi, NoxGameBytecode } from "
 import { ViemLedger } from "../src/chain/viem-ledger.js";
 import { PlayerWallets } from "../src/chain/wallets.js";
 import { TemplateNarrator } from "../src/narrator.js";
+import type { GameLedger } from "../src/chain/ledger.js";
+import { recoverGames } from "../src/recovery.js";
 import { Registry } from "../src/registry.js";
+import { SqliteStore, storeKey } from "../src/store.js";
 import { FakeMessenger, FakeScheduler } from "./fakes.js";
 
 const hasAnvil = (() => {
@@ -124,4 +127,72 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     const revealed = await publicClient.readContract({ address: gameAddress, abi: NoxGameAbi, functionName: "revealedRoleOf", args: [gameId, wallets.address(wolf!)] });
     expect(revealed).toBe(2); // werewolf
   }, 60_000);
+
+  it("after a restart: cancels a game that was still running and finalizes one that had ended", async () => {
+    const logs: Record<string, unknown>[] = [];
+    const wallets = new PlayerWallets(Uint8Array.from({ length: 32 }, (_, i) => 100 + i));
+    const store = new SqliteStore(":memory:", storeKey("ab".repeat(32)));
+    const newLedger = () =>
+      new ViemLedger({
+        chain,
+        rpcUrl: RPC,
+        gameAddress,
+        operatorKey: OPERATOR_KEY,
+        wallets,
+        minBalance: 10n ** 15n,
+        dripAmount: 10n ** 16n,
+        pollingMs: 50,
+        log: (l) => logs.push(l),
+        onSettled: (id, outcome) => store.setStatus(id, outcome),
+      });
+
+    // "Old process": its finalize never reaches the chain (as if the server died right after the game).
+    const old = newLedger();
+    const dropFinalize: GameLedger = Object.assign(Object.create(old), { finalize() {} });
+    const play = async (chatId: number, users: number[], finish: boolean) => {
+      const messenger = new FakeMessenger();
+      const scheduler = new FakeScheduler();
+      const registry = new Registry({
+        messenger,
+        scheduler,
+        timings: { lobbyMs: 1000, nightMs: 1000, discussionMs: 1000, voteMs: 1000 },
+        randomInt: () => 0,
+        botUsername: "nox_test_bot",
+        narratorFor: (lang) => new TemplateNarrator(lang),
+        ledger: dropFinalize,
+        store,
+      });
+      for (const u of users) registry.markStarted(u);
+      await registry.create(chatId, users[0]!, "Host", "en");
+      const room = registry.roomOfChat(chatId)!;
+      for (const u of users.slice(1)) await registry.join(room.id, u, `P${u}`);
+      await room.start(users[0]!);
+      if (finish) {
+        const wolf = users.find((u) => room.roleOf(u) === "werewolf")!;
+        await scheduler.advance(1000); // night passes with no actions
+        await scheduler.advance(1000); // discussion → vote
+        for (const u of users) await room.vote(u, 1, String(wolf));
+        expect(room.status).toBe("ended");
+      }
+      return room.gameId!;
+    };
+    const runningId = await play(-10, [201, 202, 203, 204, 205], false);
+    const endedId = await play(-20, [301, 302, 303, 304, 305], true);
+    await old.idle();
+    expect(await old.statusOf(runningId)).toBe(2);
+    expect(await old.statusOf(endedId)).toBe(2);
+    expect(store.unsettledGames().map((g) => g.status).sort()).toEqual(["ended", "running"]);
+
+    // "New process": fresh ledger, same store.
+    const fresh = newLedger();
+    const messenger = new FakeMessenger();
+    await recoverGames(store, fresh, messenger, (l) => logs.push(l));
+    await fresh.idle();
+
+    expect(await fresh.statusOf(runningId)).toBe(4); // Cancelled
+    expect(await fresh.statusOf(endedId)).toBe(3); // Finalized
+    expect(messenger.group()).toEqual([expect.stringContaining("restarted")]);
+    expect(store.unsettledGames()).toEqual([]);
+    expect(logs.filter((l) => l.event === "chain_error")).toEqual([]);
+  }, 90_000);
 });

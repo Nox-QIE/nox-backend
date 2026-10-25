@@ -16,3 +16,6 @@ coverage/
 !.env.example
 *.pem
 *.key
+
+# local database
+data/

@@ -18,6 +18,7 @@ import { noLedger, type GameLedger, type LedgerNightReveal } from "./chain/ledge
 import { esc, roleName, T, type Lang } from "./i18n.js";
 import type { Narrator } from "./narrator.js";
 import type { Keyboard, Messenger, Scheduler, Timings } from "./ports.js";
+import type { Store } from "./store.js";
 
 export type RoomStatus = "lobby" | "running" | "ended" | "cancelled";
 
@@ -33,6 +34,8 @@ export interface RoomDeps {
   onClosed: (room: GameRoom) => void;
   /** On-chain record (NoxGame). Defaults to none; gameplay never waits for it. */
   ledger?: GameLedger;
+  /** Durable store for game secrets, so a game can still be revealed or cancelled after a restart. */
+  store?: Store;
 }
 
 export interface Reply {
@@ -192,8 +195,14 @@ export class GameRoom {
       this.secrets.set(Number(a.id), { salt: p.salt, proof: p.proof });
     });
     this.gameId = gameId;
+    // Persist before anything goes on-chain: without the salts the game could never be revealed.
+    this.deps.store?.saveGame(gameId, this.chatId, this.lang, { roles: this.roleReveals(), nights: [] });
     const config = { players: this.assignments.length, timings: this.deps.timings, revealOnDeath: true, lang: this.lang };
     this.ledger.startGame(gameId, configHash(config), this.assignments.map((a) => Number(a.id)), committed.root);
+  }
+
+  private roleReveals() {
+    return this.assignments.map((a) => ({ userId: Number(a.id), role: ROLE_CODE[a.role], ...this.secrets.get(Number(a.id))! }));
   }
 
   private exec(cmd: Command): GameEvent[] {
@@ -255,6 +264,7 @@ export class GameRoom {
     const nonce = randomBytes32();
     const hash = actionHash(this.gameId, round, this.ledger.addressOf(userId)!, kind, this.ledger.addressOf(targetUserId)!, nonce);
     this.nights.push({ round, userId, action: ACTION_CODE[kind], targetUserId, nonce });
+    this.deps.store?.updateSecret(this.gameId, { roles: this.roleReveals(), nights: this.nights });
     this.ledger.commitNightAction(this.gameId, round, userId, hash);
   }
 
@@ -337,8 +347,9 @@ export class GameRoom {
     this.phaseStep = null;
     this.cancelTimer?.();
     if (this.gameId) {
-      const roles = this.assignments.map((a) => ({ userId: Number(a.id), role: ROLE_CODE[a.role], ...this.secrets.get(Number(a.id))! }));
-      this.ledger.finalize(this.gameId, roles, this.nights, resultHash(this.log), TEAM_CODE[ended.winner]);
+      const payload = { roles: this.roleReveals(), nights: this.nights, resultHash: resultHash(this.log), winner: TEAM_CODE[ended.winner] };
+      this.deps.store?.markEnded(this.gameId, payload);
+      this.ledger.finalize(this.gameId, payload.roles, payload.nights, payload.resultHash, payload.winner);
     }
     const roster = this.state!.seats.map((id) => ({ name: this.name(id), role: ended.roles[id]! }));
     await this.deps.messenger.sendGroup(this.chatId, await this.deps.narrator.gameOver(ended.winner, roster));
