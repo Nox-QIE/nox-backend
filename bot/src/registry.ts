@@ -1,9 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { T, type Lang } from "./i18n.js";
-import type { Narrator } from "./narrator.js";
 import { GameRoom, type Reply, type RoomDeps } from "./room.js";
 
-type Deps = Omit<RoomDeps, "onClosed" | "narrator"> & { narratorFor: (lang: Lang) => Narrator };
+type Deps = Omit<RoomDeps, "onClosed">;
 
 /** Tracks which users can be DMed and which room each chat and user belongs to. */
 export class Registry {
@@ -49,10 +48,8 @@ export class Registry {
     if (this.byChat.has(chatId)) return { ok: false, text: t.gameExists };
     if (this.byUser.has(hostId)) return { ok: false, text: t.inOtherGame };
     if (!this.startedUsers.has(hostId)) return { ok: false, text: t.needStart(hostName, this.deps.botUsername) };
-    const { narratorFor, ...rest } = this.deps;
     const room = new GameRoom(this.newId(), chatId, hostId, hostName, lang, {
-      ...rest,
-      narrator: narratorFor(lang),
+      ...this.deps,
       onClosed: (r) => this.forget(r),
     });
     this.rooms.set(room.id, room);

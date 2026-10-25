@@ -80,6 +80,21 @@ Ukur biaya per game (memakai token sungguhan):
 node --env-file=.env --import tsx bot/scripts/gm-sample.ts
 ```
 
+## Agent Marketplace (F18): persona hosted
+
+Pemilik agent mengirim persona (nama, tagline, gaya narasi, maks 3 contoh, bahasa). Persona berjalan di LLM milik Nox; aturan GM, guard, dan kalimat fakta tetap berlaku, persona hanya mengubah gaya. Teks persona dikutip sebagai data (JSON, `<` di-escape) setelah aturan tetap.
+
+- Host memilih Game Master lewat tombol di lobby `/newgame` (hanya host, hanya sebelum mulai; hanya persona yang mendukung bahasa lobby; hanya bila `NOX_GM=llm`). Agent yang di-suspend sebelum mulai → kembali ke GM bawaan.
+- Setiap game selesai yang dinarasikan agent dicatat (`agent_usage`) untuk settlement bagi hasil bulanan (`NoxPayments.allocateAgentPool`, 30% pemilik).
+- CLI operator (moderasi manual: baca teksnya dulu sebelum `add`):
+
+```bash
+node --env-file=.env --import tsx bot/scripts/agents.ts add 0xPEMILIK agents/example-noir.json
+node --env-file=.env --import tsx bot/scripts/agents.ts list
+node --env-file=.env --import tsx bot/scripts/agents.ts suspend 1
+node --env-file=.env --import tsx bot/scripts/agents.ts usage 2026-11
+```
+
 ## Blockchain (NoxGame di QIE)
 
 Default `NOX_CHAIN=off`: game jalan tanpa chain. Dengan `NOX_CHAIN=testnet|mainnet|local`:

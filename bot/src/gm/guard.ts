@@ -11,6 +11,15 @@ const reEscape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** Whole-word match, so "Ben" does not hit "bentuk" and "Ava" does not hit "lava". */
 const mentions = (text: string, name: string) => new RegExp(`(?<![\\p{L}\\p{N}])${reEscape(name)}(?![\\p{L}\\p{N}])`, "u").test(text);
 
+/** Problems shared by narration and third-party persona text: links, markup, mentions, money talk. */
+export function contentProblem(text: string): "link" | "markup" | "mention" | "money" | null {
+  if (LINK.test(text)) return "link";
+  if (MARKUP.test(text)) return "markup";
+  if (/@\w/.test(text)) return "mention";
+  if (MONEY.test(text)) return "money";
+  return null;
+}
+
 /**
  * Reject narration that names a forbidden player (anyone still alive, unless explicitly allowed),
  * carries links or markup, or talks about money. Names are matched case-insensitively as whole words;

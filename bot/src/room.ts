@@ -16,6 +16,7 @@ import { ACTION_CODE, actionHash, commitRoles, configHash, randomBytes32, result
 import type { Hex } from "viem";
 import { noLedger, type GameLedger, type LedgerNightReveal } from "./chain/ledger.js";
 import { esc, roleName, T, type Lang } from "./i18n.js";
+import type { AgentRecord, Persona } from "./agents.js";
 import type { Narrator } from "./narrator.js";
 import type { Keyboard, Messenger, Scheduler, Timings } from "./ports.js";
 import type { Store } from "./store.js";
@@ -24,7 +25,10 @@ export type RoomStatus = "lobby" | "running" | "ended" | "cancelled";
 
 export interface RoomDeps {
   messenger: Messenger;
-  narrator: Narrator;
+  /** Builds the narrator for a game; a persona comes from the Agent Marketplace. */
+  narratorFor: (lang: Lang, persona?: Persona) => Narrator;
+  /** Active Marketplace agents the host can pick in the lobby (none = no picker). */
+  agents?: () => AgentRecord[];
   scheduler: Scheduler;
   timings: Timings;
   /** CSPRNG-backed integer in [0, maxExclusive). */
@@ -67,6 +71,9 @@ export class GameRoom {
   gameId: Hex | null = null;
   private secrets = new Map<number, { salt: Hex; proof: Hex[] }>();
   private readonly nights: LedgerNightReveal[] = [];
+  private narrator: Narrator;
+  /** Marketplace agent picked by the host (null = Nox's own Game Master). */
+  agentId: number | null = null;
 
   constructor(
     readonly id: string,
@@ -78,6 +85,7 @@ export class GameRoom {
   ) {
     this.t = T[lang];
     this.ledger = deps.ledger ?? noLedger;
+    this.narrator = deps.narratorFor(lang);
     this.players.set(hostId, hostName);
   }
 
@@ -118,12 +126,41 @@ export class GameRoom {
     });
   }
 
+  private lobbyAgents(): AgentRecord[] {
+    return (this.deps.agents?.() ?? []).filter((a) => a.persona.langs.includes(this.lang)).slice(0, 4);
+  }
+
   private lobbyText() {
-    return this.t.lobby(this.name(this.hostId), [...this.players.keys()].map((id) => this.name(id)), MIN_PLAYERS, MAX_PLAYERS, Math.round(this.deps.timings.lobbyMs / 1000));
+    const text = this.t.lobby(this.name(this.hostId), [...this.players.keys()].map((id) => this.name(id)), MIN_PLAYERS, MAX_PLAYERS, Math.round(this.deps.timings.lobbyMs / 1000));
+    if (!this.lobbyAgents().length) return text;
+    const picked = this.lobbyAgents().find((a) => a.id === this.agentId);
+    return `${text}\n${this.t.gmLine(picked ? `${esc(picked.persona.name)}${picked.persona.tagline ? ` (${esc(picked.persona.tagline)})` : ""}` : this.t.gmDefault)}`;
   }
 
   private lobbyKeyboard(): Keyboard {
-    return [[{ text: this.t.joinBtn, data: `j:${this.id}` }, { text: this.t.startBtn, data: `s:${this.id}` }]];
+    const rows: Keyboard = [[{ text: this.t.joinBtn, data: `j:${this.id}` }, { text: this.t.startBtn, data: `s:${this.id}` }]];
+    const agents = this.lobbyAgents();
+    if (agents.length) {
+      const mark = (on: boolean, label: string) => (on ? `✓ ${label}` : label);
+      rows.push([{ text: mark(this.agentId === null, this.t.gmDefault), data: `a:${this.id}:0` }]);
+      for (const a of agents) rows.push([{ text: mark(this.agentId === a.id, `🎭 ${a.persona.name}`), data: `a:${this.id}:${a.id}` }]);
+    }
+    return rows;
+  }
+
+  /** Host picks the Game Master in the lobby. 0 = Nox's own. */
+  pickAgent(userId: number, agentId: number): Promise<Reply> {
+    return this.run(async () => {
+      if (this.status !== "lobby") return { ok: false, text: this.t.notLobby };
+      if (userId !== this.hostId) return { ok: false, text: this.t.onlyHost };
+      const agent = this.lobbyAgents().find((a) => a.id === agentId);
+      if (agentId !== 0 && !agent) return { ok: false, text: this.t.stale };
+      this.agentId = agent ? agent.id : null;
+      if (this.lobbyMessageId !== null) {
+        await this.deps.messenger.editGroup(this.chatId, this.lobbyMessageId, this.lobbyText(), this.lobbyKeyboard());
+      }
+      return { ok: true, text: this.t.gmPicked(agent ? agent.persona.name : this.t.gmDefault) };
+    });
   }
 
   join(userId: number, displayName: string): Promise<Reply> {
@@ -154,7 +191,7 @@ export class GameRoom {
     if (this.players.size >= MIN_PLAYERS) return this.begin();
     this.status = "cancelled";
     await this.deps.messenger.sendGroup(this.chatId, this.t.cancelled(MIN_PLAYERS));
-    this.deps.narrator.finish?.();
+    this.narrator.finish?.();
     this.deps.onClosed(this);
   }
 
@@ -163,6 +200,9 @@ export class GameRoom {
   private async begin() {
     this.cancelTimer?.();
     this.status = "running";
+    const agent = this.agentId !== null ? this.lobbyAgents().find((a) => a.id === this.agentId) : undefined;
+    if (agent) this.narrator = this.deps.narratorFor(this.lang, agent.persona);
+    else this.agentId = null;
     const ids = [...this.players.keys()].map(String);
     this.assignments = assignRoles(ids, this.deps.randomInt);
     const created = createGame(this.assignments);
@@ -181,7 +221,7 @@ export class GameRoom {
     }
 
     const view = publicView(this.state, this.events);
-    await this.deps.messenger.sendGroup(this.chatId, await this.deps.narrator.intro(view, ids.map((id) => this.name(id))));
+    await this.deps.messenger.sendGroup(this.chatId, await this.narrator.intro(view, ids.map((id) => this.name(id))));
     await this.startNight();
   }
 
@@ -218,7 +258,7 @@ export class GameRoom {
   private async startNight() {
     this.phaseStep = "night";
     const state = this.state!;
-    await this.deps.messenger.sendGroup(this.chatId, await this.deps.narrator.nightFalls(publicView(state, this.events)));
+    await this.deps.messenger.sendGroup(this.chatId, await this.narrator.nightFalls(publicView(state, this.events)));
     const alive = state.seats.filter((id) => state.players[id]!.alive);
     for (const id of alive) {
       const role = state.players[id]!.role;
@@ -291,7 +331,7 @@ export class GameRoom {
     const resolved = evs.find((e) => e.type === "night_resolved");
     if (resolved?.type === "night_resolved") {
       const name = resolved.eliminated ? this.name(resolved.eliminated) : null;
-      await this.deps.messenger.sendGroup(this.chatId, await this.deps.narrator.morning(publicView(this.state!, this.events), name, resolved.revealedRole));
+      await this.deps.messenger.sendGroup(this.chatId, await this.narrator.morning(publicView(this.state!, this.events), name, resolved.revealedRole));
     }
     if (await this.finishIfEnded(evs)) return;
     this.phaseStep = "discussion";
@@ -336,7 +376,7 @@ export class GameRoom {
     if (this.gameId && resolved) this.ledger.recordRound(this.gameId, dayRound, resultHash(resolved));
     if (resolved?.type === "day_resolved") {
       const name = resolved.eliminated ? this.name(resolved.eliminated) : null;
-      await this.deps.messenger.sendGroup(this.chatId, await this.deps.narrator.dayResult(publicView(this.state!, this.events), name, resolved.revealedRole));
+      await this.deps.messenger.sendGroup(this.chatId, await this.narrator.dayResult(publicView(this.state!, this.events), name, resolved.revealedRole));
     }
     if (await this.finishIfEnded(evs)) return;
     await this.startNight();
@@ -354,10 +394,11 @@ export class GameRoom {
       this.ledger.finalize(this.gameId, payload.roles, payload.nights, payload.resultHash, payload.winner);
     }
     const roster = this.state!.seats.map((id) => ({ name: this.name(id), role: ended.roles[id]! }));
-    let over = await this.deps.narrator.gameOver(ended.winner, roster);
+    if (this.agentId !== null) this.deps.store?.recordAgentUsage(this.agentId, this.players.size, this.gameId);
+    let over = await this.narrator.gameOver(ended.winner, roster);
     if (this.gameId && this.deps.webUrl) over += `\n\n${this.t.verifyLink(`${this.deps.webUrl.replace(/\/+$/, "")}/game/?id=${this.gameId}`)}`;
     await this.deps.messenger.sendGroup(this.chatId, over);
-    this.deps.narrator.finish?.();
+    this.narrator.finish?.();
     this.deps.onClosed(this);
     return true;
   }
