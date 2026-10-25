@@ -92,6 +92,32 @@ class SerialQueue {
 }
 
 /**
+ * One game's on-chain steps. Ordered steps (create, commitRoles, recordRound, finalize, cancel) are
+ * barriers: they wait for everything before them. Player actions between two barriers (the votes of
+ * a day, the night commitments) come from different wallets and run in parallel, so a full table
+ * lands in one or two blocks instead of one block per player.
+ */
+class GameQueue {
+  private barrier: Promise<unknown> = Promise.resolve();
+  private parallel: Promise<unknown>[] = [];
+
+  run(job: () => Promise<void>, parallel: boolean): Promise<void> {
+    if (parallel) {
+      const p = this.barrier.then(job);
+      this.parallel.push(p.catch(() => undefined));
+      return p;
+    }
+    const p = Promise.allSettled([this.barrier, ...this.parallel]).then(job);
+    this.barrier = p.catch(() => undefined);
+    this.parallel = [];
+    return p;
+  }
+}
+
+/** Player actions that may run in parallel with each other (different wallets, same phase). */
+const PARALLEL_STEPS = new Set(["commitNightAction", "castVote"]);
+
+/**
  * NoxGame through viem. Each game has its own queue so its transactions land in order; the operator
  * has one global queue because all games share its nonce. Every player transaction is sent from
  * that player's own derived wallet, after a gas drip from the operator if needed, so each human
@@ -102,7 +128,11 @@ export class ViemLedger implements GameLedger {
   readonly publicClient: PublicClient;
   private readonly operator: Account;
   private readonly operatorQueue = new SerialQueue();
-  private readonly gameQueues = new Map<Hex, SerialQueue>();
+  private readonly gameQueues = new Map<Hex, GameQueue>();
+  /** One queue per player wallet, so a player's own transactions never race on their nonce. */
+  private readonly playerQueues = new Map<Address, SerialQueue>();
+  /** Operator nonce kept locally so operator transactions can be pipelined. */
+  private operatorNonce: number | null = null;
   private readonly failed = new Set<Hex>();
   private readonly pending = new Set<Promise<unknown>>();
   private readonly transport: Transport;
@@ -189,7 +219,7 @@ export class ViemLedger implements GameLedger {
 
   private enqueue(gameId: Hex, step: string, job: () => Promise<unknown>) {
     let q = this.gameQueues.get(gameId);
-    if (!q) this.gameQueues.set(gameId, (q = new SerialQueue()));
+    if (!q) this.gameQueues.set(gameId, (q = new GameQueue()));
     const p = q
       .run(async () => {
         // After a failure only a cancel may still run, so the game does not stay "Running" forever.
@@ -203,14 +233,14 @@ export class ViemLedger implements GameLedger {
           // A failed finalize keeps its record for the boot-time retry; any other failure cancels the game.
           if (first && step !== "finalize" && step !== "cancel") this.cancel(gameId, `chain error at ${step}`);
         }
-      })
+      }, PARALLEL_STEPS.has(step))
       .finally(() => this.pending.delete(p));
     this.pending.add(p);
   }
 
-  private async send(account: Account, functionName: string, args: readonly unknown[]): Promise<Hex> {
+  /** Simulate (so a revert surfaces with its custom error instead of burning gas), then submit. */
+  private async submit(account: Account, functionName: string, args: readonly unknown[], nonce?: number): Promise<Hex> {
     const wallet = createWalletClient({ account, chain: this.o.chain, transport: this.transport });
-    // Simulate first so a revert surfaces with its custom error instead of burning gas.
     const { request } = await this.publicClient.simulateContract({
       account,
       address: this.o.gameAddress,
@@ -218,20 +248,48 @@ export class ViemLedger implements GameLedger {
       functionName: functionName as never,
       args: args as never,
     });
-    const hash = await wallet.writeContract(request as never);
-    const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
-    if (receipt.status !== "success") throw new Error(`${functionName} reverted (${hash})`);
-    return hash;
+    return wallet.writeContract({ ...(request as object), ...(nonce !== undefined ? { nonce } : {}) } as never);
   }
 
-  private asOperator(functionName: string, args: readonly unknown[]) {
-    return this.operatorQueue.run(() => this.send(this.operator, functionName, args));
+  private async confirm(hash: Hex, what: string) {
+    const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+    if (receipt.status !== "success") throw new Error(`${what} reverted (${hash})`);
+  }
+
+  /**
+   * Operator transactions are submitted one by one with a locally tracked nonce, but confirmed in
+   * parallel, so drips and operator calls from many games share blocks instead of queuing a block each.
+   */
+  private async operatorSend(submit: (nonce: number) => Promise<Hex>): Promise<Hex> {
+    return this.operatorQueue.run(async () => {
+      this.operatorNonce ??= await this.publicClient.getTransactionCount({ address: this.operator.address, blockTag: "pending" });
+      try {
+        const hash = await submit(this.operatorNonce);
+        this.operatorNonce++;
+        return hash;
+      } catch (e) {
+        this.operatorNonce = null; // resync from the chain on the next send
+        throw e;
+      }
+    });
+  }
+
+  private async asOperator(functionName: string, args: readonly unknown[]) {
+    const hash = await this.operatorSend((nonce) => this.submit(this.operator, functionName, args, nonce));
+    await this.confirm(hash, functionName);
+    return hash;
   }
 
   private async asPlayer(userId: number, functionName: string, args: readonly unknown[]) {
     const account = this.o.wallets.account(userId);
-    await this.drip(account.address);
-    return this.send(account, functionName, args);
+    let q = this.playerQueues.get(account.address);
+    if (!q) this.playerQueues.set(account.address, (q = new SerialQueue()));
+    return q.run(async () => {
+      await this.drip(account.address);
+      const hash = await this.submit(account, functionName, args);
+      await this.confirm(hash, functionName);
+      return hash;
+    });
   }
 
   /** Reserve today's drip allowance for `to`, or throw when a cap would be exceeded. */
@@ -258,11 +316,10 @@ export class ViemLedger implements GameLedger {
     const balance = await this.publicClient.getBalance({ address: to });
     if (balance >= this.o.minBalance) return;
     this.reserveDrip(to, this.o.dripAmount - balance);
-    await this.operatorQueue.run(async () => {
-      const wallet = createWalletClient({ account: this.operator, chain: this.o.chain, transport: this.transport });
-      const hash = await wallet.sendTransaction({ to, value: this.o.dripAmount - balance, chain: this.o.chain });
-      await this.publicClient.waitForTransactionReceipt({ hash });
-      this.o.log?.({ event: "gas_drip", to, wei: (this.o.dripAmount - balance).toString(), hash });
-    });
+    const wallet = createWalletClient({ account: this.operator, chain: this.o.chain, transport: this.transport });
+    const value = this.o.dripAmount - balance;
+    const hash = await this.operatorSend((nonce) => wallet.sendTransaction({ to, value, nonce, chain: this.o.chain }));
+    await this.confirm(hash, "gas drip");
+    this.o.log?.({ event: "gas_drip", to, wei: value.toString(), hash });
   }
 }
