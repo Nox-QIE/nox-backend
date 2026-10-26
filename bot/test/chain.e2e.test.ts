@@ -156,7 +156,7 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     expect(await balance(victim)).toBe(30n); // killed at night, never voted
     for (const u of role("villager").filter((u) => u !== victim)) expect(await balance(u)).toBe(32n);
     // The breakdown read back from RewardGranted (sent to each player by DM).
-    expect(rewards.find((r) => r.userId === seer)).toEqual({ userId: seer, base: 30, role: 5, vote: 2, streak: 0, total: 37, streakDays: 1 });
+    expect(rewards.find((r) => r.userId === seer)).toEqual({ userId: seer, base: 30, role: 5, vote: 2, streak: 0, scamShield: 0, total: 37, streakDays: 1 });
     expect(rewards.find((r) => r.userId === wolf)).toMatchObject({ base: 10, role: 0, vote: 0, total: 10 });
     expect(rewards).toHaveLength(5);
 
@@ -474,6 +474,12 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     await ledger.idle();
     expect(logs.filter((l) => l.event === "chain_error")).toEqual([]);
     expect(await ledger.statusOf(gameId)).toBe(2); // Running: create, 5 joins and commitRoles all landed
+    // A Scam Shield game is created in its mode, so a village win earns the on-chain bonus (F10-S05).
+    const scamId = ("0x" + "78".repeat(32)) as Hex;
+    ledger.startGame(scamId, ("0x" + "00".repeat(32)) as Hex, users, commitRoles(scamId, roles).root, 1);
+    await ledger.idle();
+    expect(await publicClient.readContract({ address: gameAddress, abi: NoxGameAbi, functionName: "modeOf", args: [scamId] })).toBe(1);
+    expect(await publicClient.readContract({ address: gameAddress, abi: NoxGameAbi, functionName: "modeOf", args: [gameId] })).toBe(0);
     expect(gasLimitFor("createGame", 22088n)).toBe(110_000n); // broken estimate: fallback
     expect(gasLimitFor("createGame", 70_000n)).toBe(140_000n); // twice the estimate: free on QIE while estimate ≤ use
     // Finalize falls back to a size-based limit; the 12-player one covers the 1.65M measured in the contract tests.

@@ -160,6 +160,7 @@ export class GameQueue {
  */
 export const GAS_FALLBACK: Record<string, bigint> = {
   createGame: 110_000n,
+  createGameWithMode: 140_000n,
   joinGame: 150_000n,
   commitRoles: 90_000n,
   commitNightAction: 90_000n,
@@ -217,6 +218,8 @@ export interface PlayerReward {
   role: number;
   vote: number;
   streak: number;
+  /** Scam Shield bonus: the village spotted the scammers (F10-S05). */
+  scamShield: number;
   total: number;
   /** Consecutive UTC days with a finalized game, including today. */
   streakDays: number;
@@ -348,9 +351,27 @@ export class ViemLedger implements GameLedger {
 
   // ------------------------------------------------------------ GameLedger
 
-  startGame(gameId: Hex, configHash: Hex, players: number[], rolesRoot: Hex) {
+  /** Whether the deployed NoxGame has game modes (nox-contracts#17); asked once. */
+  private modes?: Promise<boolean>;
+
+  private supportsModes(): Promise<boolean> {
+    this.modes ??= this.publicClient
+      .readContract({ address: this.o.gameAddress, abi: NoxGameAbi, functionName: "scamShieldBonus" })
+      .then(
+        () => true,
+        () => false,
+      );
+    return this.modes;
+  }
+
+  startGame(gameId: Hex, configHash: Hex, players: number[], rolesRoot: Hex, mode = 0) {
     this.enqueue(gameId, "start", async () => {
-      await this.asOperator("createGame", [gameId, configHash]);
+      // An older NoxGame has no modes: the game still runs, as a standard one (no on-chain bonus).
+      if (mode !== 0 && (await this.supportsModes())) await this.asOperator("createGameWithMode", [gameId, configHash, mode]);
+      else {
+        if (mode !== 0) this.o.log?.({ event: "game_mode_unsupported", gameId, mode });
+        await this.asOperator("createGame", [gameId, configHash]);
+      }
       // Joins come from different wallets, so they can be in flight together. Wait for all of them
       // to settle before failing, so a later cancel never races joins or drips still in flight.
       const joins = await Promise.allSettled(players.map((p) => this.asPlayer(p, "joinGame", [gameId])));
@@ -407,13 +428,15 @@ export class ViemLedger implements GameLedger {
       const receipt = await this.publicClient.getTransactionReceipt({ hash });
       const byAddress = new Map(userIds.map((u) => [this.addressOf(u).toLowerCase(), u]));
       const grants = parseEventLogs({ abi: NoxGameAbi, eventName: "RewardGranted", logs: receipt.logs });
+      const bonus = new Map(parseEventLogs({ abi: NoxGameAbi, eventName: "ScamShieldBonus", logs: receipt.logs }).map((b) => [b.args.player.toLowerCase(), b.args.amount]));
       const rewards: PlayerReward[] = [];
       for (const g of grants) {
         const userId = byAddress.get(g.args.player.toLowerCase());
         if (userId === undefined) continue;
         const [, days] = await this.publicClient.readContract({ address: this.o.gameAddress, abi: NoxGameAbi, functionName: "streakOf", args: [g.args.player] });
         const { base, roleBonus, voteBonus, streakBonus } = g.args;
-        rewards.push({ userId, base, role: roleBonus, vote: voteBonus, streak: streakBonus, total: base + roleBonus + voteBonus + streakBonus, streakDays: days });
+        const scamShield = bonus.get(g.args.player.toLowerCase()) ?? 0;
+        rewards.push({ userId, base, role: roleBonus, vote: voteBonus, streak: streakBonus, scamShield, total: base + roleBonus + voteBonus + streakBonus + scamShield, streakDays: days });
       }
       this.o.onRewards?.(gameId, rewards);
     } catch (e) {

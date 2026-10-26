@@ -69,7 +69,7 @@ type Dict = {
   gmDefault: string;
   gmPicked: (name: string) => string;
   verifyLink: (url: string) => string;
-  rewardDm: (r: { base: number; role: number; vote: number; streak: number; total: number; streakDays: number }) => string;
+  rewardDm: (r: { base: number; role: number; vote: number; streak: number; scamShield?: number; total: number; streakDays: number }) => string;
   pickKill: string;
   pickInspect: string;
   pickProtect: string;
@@ -144,6 +144,7 @@ export const T: Record<Lang, Dict> = {
         r.role ? `• Peran dimainkan dengan baik: +${r.role}` : "",
         r.vote ? `• Vote tepat ke werewolf: +${r.vote}` : "",
         r.streak ? `• Streak harian (${r.streakDays} hari berturut-turut): +${r.streak}` : r.streakDays > 1 ? `• Streak: ${r.streakDays} hari berturut-turut` : "",
+        r.scamShield ? `• Bonus Scam Shield (penipu berhasil dikenali): +${r.scamShield}` : "",
         "Credits adalah poin status: tidak bisa dipindah atau diuangkan, dan dicatat di blockchain QIE.",
       ]
         .filter(Boolean)
@@ -229,6 +230,7 @@ export const T: Record<Lang, Dict> = {
         r.role ? `• Role played well: +${r.role}` : "",
         r.vote ? `• Votes that hit a werewolf: +${r.vote}` : "",
         r.streak ? `• Daily streak (${r.streakDays} days in a row): +${r.streak}` : r.streakDays > 1 ? `• Streak: ${r.streakDays} days in a row` : "",
+        r.scamShield ? `• Scam Shield bonus (the scammers were spotted): +${r.scamShield}` : "",
         "Credits are status points: they cannot be transferred or cashed out, and they are recorded on the QIE blockchain.",
       ]
         .filter(Boolean)

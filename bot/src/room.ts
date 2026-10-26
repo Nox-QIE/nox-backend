@@ -288,7 +288,8 @@ export class GameRoom {
       gm: gmRef(agent),
       scenario: this.scenario ? scenarioRef(this.scenario) : null,
     };
-    this.ledger.startGame(gameId, configHash(config), this.assignments.map((a) => Number(a.id)), committed.root);
+    // A Scam Shield game is created in its mode, so a village win earns the on-chain bonus (F10-S05).
+    this.ledger.startGame(gameId, configHash(config), this.assignments.map((a) => Number(a.id)), committed.root, this.scenario ? 1 : 0);
   }
 
   private roleReveals() {

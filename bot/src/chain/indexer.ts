@@ -524,7 +524,9 @@ export class EventStore {
               CAST(json_extract(f.args, '$.winner') AS INTEGER) AS winner,
               (SELECT COUNT(*) FROM chain_events x WHERE x.game_id = j.game_id AND x.event = 'GameCancelled') AS cancelled,
               (SELECT COUNT(*) FROM chain_events d WHERE d.game_id = j.game_id AND d.event = 'GameDisputed') AS disputed,
-              g.args AS reward
+              g.args AS reward,
+              (SELECT SUM(CAST(json_extract(b.args, '$.amount') AS INTEGER)) FROM chain_events b
+                WHERE b.game_id = j.game_id AND b.event = 'ScamShieldBonus' AND b.account = j.account) AS bonus
        FROM chain_events j
        LEFT JOIN chain_events r ON r.game_id = j.game_id AND r.event = 'RoleRevealed' AND r.account = j.account
        LEFT JOIN chain_events f ON f.game_id = j.game_id AND f.event = 'GameFinalized'
@@ -543,7 +545,7 @@ export class EventStore {
         status: winner !== null ? "finalized" : Number(r.cancelled) ? "cancelled" : Number(r.disputed) ? "disputed" : "running",
         won: role !== null && winner !== null ? (role === 2 ? 2 : 1) === winner : null,
         /** Credits breakdown from RewardGranted (ADR-005); null for games before the formula or not finalized. */
-        reward: r.reward ? rewardOf(JSON.parse(r.reward as string) as Record<string, unknown>) : null,
+        reward: r.reward ? rewardOf(JSON.parse(r.reward as string) as Record<string, unknown>, Number(r.bonus ?? 0)) : null,
       };
     });
     const signed = this.rows(
@@ -803,10 +805,11 @@ export async function reconcileCredits(store: EventStore, balanceAt: (account: A
   return r;
 }
 
-const rewardOf = (a: Record<string, unknown>) => {
+/** RewardGranted's breakdown, plus the Scam Shield bonus minted next to it (F10-S05). */
+const rewardOf = (a: Record<string, unknown>, scamShield = 0) => {
   const n = (k: string) => Number(a[k] ?? 0);
-  const part = { base: n("base"), role: n("roleBonus"), vote: n("voteBonus"), streak: n("streakBonus") };
-  return { version: n("version"), ...part, total: part.base + part.role + part.vote + part.streak };
+  const part = { base: n("base"), role: n("roleBonus"), vote: n("voteBonus"), streak: n("streakBonus"), scamShield };
+  return { version: n("version"), ...part, total: part.base + part.role + part.vote + part.streak + scamShield };
 };
 
 export interface GameSummary {

@@ -75,3 +75,13 @@ describe("a Scam Shield game", () => {
     expect(store.scenarioGames(0, Date.now() + 1)).toEqual([{ scenario: "task-scam@1", players: 5, chatId: -1, winner: "village", endedAt: expect.any(Number) }]);
   });
 });
+
+describe("Scam Shield bonus credits (F10-S05)", () => {
+  it("shows the on-chain bonus in the reward DM", async () => {
+    const { T } = await import("../src/i18n.js");
+    const r = { base: 30, role: 0, vote: 2, streak: 0, scamShield: 5, total: 37, streakDays: 1 };
+    expect(T.id.rewardDm(r)).toContain("Bonus Scam Shield (penipu berhasil dikenali): +5");
+    expect(T.en.rewardDm(r)).toContain("Scam Shield bonus (the scammers were spotted): +5");
+    expect(T.en.rewardDm({ ...r, scamShield: 0 })).not.toContain("Scam Shield");
+  });
+});

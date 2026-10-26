@@ -77,6 +77,7 @@ A line that fails falls back in layers: persona → Nox's own voice → template
 | Function | Signed by | Payload |
 |---|---|---|
 | `NoxGame.createGame` | operator | game id, `configHash` (players, timings, language, Game Master and scenario with version and hash) |
+| `NoxGame.createGameWithMode` | operator | game id, `configHash`, mode (1 = Scam Shield: a village win earns every village player the on-chain bonus). Used only when the deployed NoxGame supports modes; otherwise `createGame` |
 | `NoxGame.joinGame` | the player's own wallet | game id |
 | `NoxGame.commitRoles` | operator | Merkle root of salted roles |
 | `NoxGame.commitNightAction` | the player's own wallet | round, `actionHash` (sealed action) |
