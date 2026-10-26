@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { decodeEventLog, type Abi, type Address, type Hex } from "viem";
+import type { GameNightPayment } from "../bookings.js";
 import type { ReportGame } from "../report.js";
 
 /**
@@ -495,6 +496,23 @@ export class EventStore {
       wins: games.filter((g) => g.won).length,
       signedTxs: Number(signed?.n ?? 0),
       history: games,
+    };
+  }
+
+  /** The on-chain payment of a booked Game Night (GameNightPaid), or null before it is paid (F04-S04). */
+  gameNightPayment(bookingId: Hex): GameNightPayment | null {
+    const r = this.rows("SELECT tx_hash, block, ts, args FROM chain_events WHERE event = 'GameNightPaid' AND lower(json_extract(args, '$.bookingId')) = ?", bookingId.toLowerCase())[0];
+    if (!r) return null;
+    const a = JSON.parse(r.args as string) as Record<string, string>;
+    return {
+      payer: a.payer as Address,
+      agentId: Number(a.agentId),
+      token: a.token as Address,
+      amount: BigInt(a.amount!),
+      ownerShare: BigInt(a.ownerShare!),
+      tx: r.tx_hash as Hex,
+      block: Number(r.block),
+      ts: Number(r.ts),
     };
   }
 
