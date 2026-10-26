@@ -63,6 +63,7 @@ export function contentCatalog(): ContentRef[] {
 /** The Game Master of a game: Nox's own, a Nox theme, or a Marketplace agent (persona or endpoint). */
 export function gmRef(agent: AgentRecord | undefined): { id: string; version?: number; hash?: Hex } {
   if (!agent) return { id: "nox" };
+  if (agent.ref) return { id: agent.ref.id, version: agent.ref.version, hash: hashOf({ persona: agent.persona, roles: agent.roles ?? null }) };
   if (agent.id < 0) {
     const t = THEMES.find((x) => x.id === agent.id);
     const ref = t ? themeRefs().find((r) => r.id === `theme:${t.keys[0]}`) : undefined;

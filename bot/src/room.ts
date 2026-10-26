@@ -234,7 +234,10 @@ export class GameRoom {
     this.cancelTimer?.();
     this.status = "running";
     const agent = this.agentId !== null ? this.lobbyAgents().find((a) => a.id === this.agentId) : undefined;
-    if (agent) this.narrator = this.deps.narratorFor(this.lang, agent.persona, undefined, agent);
+    // A client theme may rename the roles; Nox's factual lines then use those names too.
+    const roles = agent?.roles;
+    const wording = roles ? { role: (r: Role) => roles[r] ?? roleName(this.lang, r) } : undefined;
+    if (agent) this.narrator = this.deps.narratorFor(this.lang, agent.persona, wording, agent);
     else this.agentId = null;
     const ids = [...this.players.keys()].map(String);
     this.assignments = assignRoles(ids, this.deps.randomInt);
@@ -247,7 +250,7 @@ export class GameRoom {
     const wolves = this.assignments.filter((a) => a.role === "werewolf").map((a) => a.id);
     for (const a of this.assignments) {
       const mates = a.role === "werewolf" ? wolves.filter((w) => w !== a.id).map((w) => this.name(w)) : [];
-      let text = this.t.yourRole(this.sc ? this.sc.roles[a.role] : roleName(this.lang, a.role), mates);
+      let text = this.t.yourRole(this.sc ? this.sc.roles[a.role] : (roles?.[a.role] ?? roleName(this.lang, a.role)), mates);
       const secret = this.secrets.get(Number(a.id));
       if (secret) text += `\n\n${this.t.roleProof(secret.salt)}`;
       await this.deps.messenger.sendDM(Number(a.id), text);

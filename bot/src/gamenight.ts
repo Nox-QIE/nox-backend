@@ -1,4 +1,6 @@
+import type { AgentRecord } from "./agents.js";
 import type { Booking } from "./bookings.js";
+import { clientThemeAgents, type ClientTheme } from "./client-themes.js";
 import { esc, type Lang } from "./i18n.js";
 import type { Keyboard, Messenger } from "./ports.js";
 import type { Reply } from "./room.js";
@@ -53,11 +55,21 @@ export interface BookingStore {
   listBookings(): Booking[];
   bookingNotices(id: string): string[];
   addBookingNotice(id: string, notice: Notice): void;
+  getClientTheme(key: string): (ClientTheme & { rowId: number }) | null;
 }
 
 export interface BookedLobby {
-  create(chatId: number, hostId: number, hostName: string, lang: Lang, opts: { agentId?: number; scenario?: Scenario; prepaid?: boolean }): Promise<Reply>;
+  create(
+    chatId: number,
+    hostId: number,
+    hostName: string,
+    lang: Lang,
+    opts: { agentId?: number; scenario?: Scenario; prepaid?: boolean; privateAgents?: AgentRecord[] },
+  ): Promise<Reply>;
 }
+
+/** "client:<key>" in a booking's theme names a client theme (F04-S05). */
+export const clientThemeKey = (theme: string | null) => (theme?.startsWith("client:") ? theme.slice("client:".length) : null);
 
 export class GameNights {
   constructor(
@@ -105,9 +117,18 @@ export class GameNights {
       return { ok: false, text: TEXT[b?.lang ?? "en"].notNow };
     }
     const scenario = b.theme ? scenarioFrom(b.theme) : null;
+    // The client's own theme goes only into this lobby; its role names work without the LLM too.
+    const key = clientThemeKey(b.theme);
+    const own = key ? this.o.store.getClientTheme(key) : null;
+    const privateAgents = own ? clientThemeAgents(own, own.rowId).filter((a) => a.persona.langs.includes(b.lang)) : [];
     const theme = b.theme && this.o.llm ? themeIdFrom(b.theme) : null;
-    const agentId = this.o.llm && b.agentId !== null ? b.agentId : theme;
-    const r = await lobby.create(chatId, userId, name, b.lang, { ...(agentId !== null ? { agentId } : {}), ...(scenario ? { scenario } : {}), prepaid: true });
+    const agentId = this.o.llm && b.agentId !== null ? b.agentId : (privateAgents[0]?.id ?? theme);
+    const r = await lobby.create(chatId, userId, name, b.lang, {
+      ...(agentId !== null ? { agentId } : {}),
+      ...(scenario ? { scenario } : {}),
+      ...(privateAgents.length ? { privateAgents } : {}),
+      prepaid: true,
+    });
     if (r.ok) this.o.log?.({ event: "gamenight_opened", booking: b.id });
     return r;
   }
