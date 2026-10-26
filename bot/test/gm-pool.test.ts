@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadGmConfig, parsePool } from "../src/config.js";
+import { gmDataPolicyWarning, loadGmConfig, parsePool } from "../src/config.js";
 import { LlmNarrator } from "../src/gm/llm-narrator.js";
 import type { GmCompletion, GmModel } from "../src/gm/model.js";
 import { GmModelPool } from "../src/gm/pool.js";
@@ -100,5 +100,15 @@ describe("NOX_GM_MODELS", () => {
     const env = { NOX_GM: "llm", NOX_GM_PROVIDER: "anthropic", NOX_GM_MODELS: "oxion:claude-sonnet-5, anthropic:claude-opus-5-5" };
     expect(() => loadGmConfig(env)).toThrow("OXION_API_KEY");
     expect(loadGmConfig({ ...env, OXION_API_KEY: "cc_x" }).pool).toHaveLength(2);
+  });
+});
+
+describe("provider data policy (F09-D06)", () => {
+  it("warns when a pool sends prompts through a provider with an unverified upstream", () => {
+    const pool = loadGmConfig({ NOX_GM: "llm", NOX_GM_MODELS: "oxion:claude-opus-5.5@2, anthropic:claude-opus-5-5", OXION_API_KEY: "cc_x" });
+    expect(gmDataPolicyWarning(pool, "testnet")).toMatch(/^GM provider oxion .*Fine for testing/);
+    expect(gmDataPolicyWarning(pool, "mainnet")).toMatch(/Do not use it with real players on mainnet/);
+    expect(gmDataPolicyWarning(loadGmConfig({ NOX_GM: "llm", NOX_GM_MODELS: "anthropic:claude-opus-5-5" }), "mainnet")).toBeNull();
+    expect(gmDataPolicyWarning(loadGmConfig({ NOX_GM: "template", NOX_GM_PROVIDER: "oxion" }), "mainnet")).toBeNull();
   });
 });

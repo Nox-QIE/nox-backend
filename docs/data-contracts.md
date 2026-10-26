@@ -65,7 +65,7 @@ Only public facts are sent. The LLM never receives Telegram ids, the secret role
 - has no links, markup, @mentions or money talk;
 - is 1–500 characters.
 
-A line that fails falls back in layers: persona → Nox's own voice → template. The provider is `NOX_GM_PROVIDER` (`anthropic` or `oxion`); costs per game are recorded in `gm_games`.
+A line that fails falls back in layers: persona → Nox's own voice → template. The provider is `NOX_GM_PROVIDER` (`anthropic` or `oxion`); costs per game are recorded in `gm_games`. What each provider does with the prompts (training, retention) is in [llm-data-policy.md](llm-data-policy.md).
 
 ## E8 QIE blockchain
 

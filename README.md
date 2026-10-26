@@ -79,6 +79,8 @@ Di mana tiap data store desain (D1–D16) berada sekarang (store bot, chain, ind
 
 Payload masuk/keluar untuk setiap entitas eksternal di DFD level 0 (Telegram: perintah & data tombol; LLM: beat & fakta; chain: fungsi & event; operator; pemilik agent; API publik; QIE ID, PSP, kreator yang belum dibangun): [docs/data-contracts.md](docs/data-contracts.md). Tes `data-contracts.test.ts` gagal bila kode menambah tombol, perintah, beat, panggilan kontrak, atau endpoint API yang belum tertulis di sana.
 
+Kebijakan data penyedia LLM (training, retensi; Anthropic `verified`, Oxion `unverified` karena hulunya `cleanapis` tanpa kebijakan publik) dan usulan keputusan: [docs/llm-data-policy.md](docs/llm-data-policy.md). Bot mencatat peringatan `gm_data_policy` saat start bila pool memakai penyedia `unverified`.
+
 ## Host Pass
 
 `/pass` di chat pribadi menampilkan wallet game pemain, status Host Pass (dari `NoxPayments.passExpiry`), harga, dan cara bayar: dari wallet sendiri dengan `buyPassFor(<wallet game>, 1, <periode>, 0x0…0)`, sehingga Nox tidak pernah memakai dana pemain. Dengan `NOX_HOST_PASS=required`, tema, Game Master Marketplace, dan lobby lebih dari 8 pemain butuh Host Pass aktif milik host (dibaca on-chain, cache 5 menit; bila RPC gagal host tetap boleh lanjut dan kejadian dicatat). Scam Shield tetap gratis.
