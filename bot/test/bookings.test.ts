@@ -1,6 +1,6 @@
 import type { Abi } from "viem";
 import { describe, expect, it } from "vitest";
-import { checkPayment, NATIVE, newBookingId, paymentInstructions, receiptHash, type Booking } from "../src/bookings.js";
+import { checkPayment, NATIVE, newBookingId, ownerShareIdr, paymentInstructions, receiptHash, type Booking } from "../src/bookings.js";
 import { NoxPaymentsAbi } from "../src/chain/contracts.js";
 import { EventIndexer, EventStore } from "../src/chain/indexer.js";
 import { SqliteStore } from "../src/store.js";
@@ -22,6 +22,8 @@ const booking = (over: Partial<Booking> = {}): Booking => ({
   decimals: 18,
   fiat: null,
   receiptHash: null,
+  ownerShareIdr: null,
+  payoutRef: null,
   status: "quoted",
   paidTx: null,
   note: null,
@@ -92,5 +94,18 @@ describe("Game Night bookings (F04)", () => {
     store.addBooking(b);
     store.updateBooking(b.id, { status: "paid", paidTx: "0x02", receiptHash: h });
     expect(store.getBooking(b.id)).toMatchObject({ fiat: { currency: "IDR", amount: 1_500_000 }, receiptHash: h, status: "paid" });
+  });
+
+  it("fixes the agent owner's rupiah share and records its payout (F18-S08)", () => {
+    expect(ownerShareIdr(1_500_000, 3000)).toBe(450_000);
+    expect(ownerShareIdr(1_000_001, 3000)).toBe(300_000); // rounded down, as on chain
+    expect(ownerShareIdr(1_500_000, 0)).toBe(0);
+    const store = new SqliteStore(":memory:");
+    const b = booking({ fiat: { currency: "IDR", amount: 1_500_000 }, price: 0n, decimals: 0 });
+    store.addBooking(b);
+    expect(store.getBooking(b.id)).toMatchObject({ ownerShareIdr: null, payoutRef: null });
+    store.updateBooking(b.id, { status: "paid", ownerShareIdr: 450_000 });
+    store.updateBooking(b.id, { payoutRef: "BCA 0042" });
+    expect(store.getBooking(b.id)).toMatchObject({ ownerShareIdr: 450_000, payoutRef: "BCA 0042", status: "paid" });
   });
 });

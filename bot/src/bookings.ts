@@ -36,6 +36,13 @@ export interface Booking {
   fiat: { currency: "IDR"; amount: number } | null;
   /** keccak256 of the payment receipt, recorded on chain for rupiah bookings. */
   receiptHash: Hex | null;
+  /**
+   * Rupiah nights with an agent (F18-S08): the owner's share, fixed when the payment is recorded from
+   * the agent's on-chain shareOf, and the reference of the transfer that paid it out (ADR-003: paid
+   * off chain). Null when there is no agent or no rupiah.
+   */
+  ownerShareIdr?: number | null;
+  payoutRef?: string | null;
   status: BookingStatus;
   paidTx: Hex | null;
   note: string | null;
@@ -67,6 +74,9 @@ export function checkPayment(b: Pick<Booking, "token" | "price" | "chainAgentId"
 }
 
 const unit = (b: Pick<Booking, "token">) => (b.token === NATIVE ? "QIE" : b.token);
+
+/** The agent owner's rupiah share of a night: amount × shareBps / 10,000, rounded down like the contract. */
+export const ownerShareIdr = (amount: number, shareBps: number): number => Math.floor((amount * shareBps) / 10_000);
 
 /** The hash recorded on chain for a receipt: bound to the booking (or pass holder), so one file cannot serve two. */
 export const receiptHash = (bookingId: Hex, receipt: Uint8Array): Hex => keccak256(concat([bookingId, keccak256(receipt)]));

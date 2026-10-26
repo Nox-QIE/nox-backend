@@ -7,12 +7,13 @@
  *   npm run gamenight -- quote <chat-id|-> <start, e.g. 2026-11-07T19:00+07:00> <price> "<client>"
  *       [--token 0x… --decimals 6 | --idr] [--agent <id>] [--theme horor] [--lang id|en] [--contact "@handle"]
  *   npm run gamenight -- paid-idr <booking> <receipt-file> [--send]   (rupiah invoice paid: receipt hash on chain, operator key)
+ *   npm run gamenight -- payouts | paid-out <booking> "<transfer reference>"   (agent owners' rupiah shares, F18-S08)
  *   npm run gamenight -- list | show <booking> | sync | set-chat <booking> <chat-id> | cancel <booking> "<reason>" | forget-contact <booking>
  *   npm run gamenight -- theme <client-theme.json> | themes      (client themes, F04-S05: quote with --theme client:<key>)
  */
 import { parseUnits, type Address } from "viem";
-import { checkPayment, NATIVE, newBookingId, paymentInstructions, receiptHash, type Booking } from "../src/bookings.js";
-import { operatorFrom, recordFiatGameNightOnChain } from "../src/chain/operator.js";
+import { checkPayment, NATIVE, newBookingId, ownerShareIdr, paymentInstructions, receiptHash, type Booking } from "../src/bookings.js";
+import { operatorFrom, recordFiatGameNightOnChain, shareOf } from "../src/chain/operator.js";
 import { loadChainConfig } from "../src/config.js";
 import { EventStore } from "../src/chain/indexer.js";
 import { AGENT_TERMS, isAddress } from "../src/agents.js";
@@ -112,7 +113,7 @@ switch (cmd) {
     break;
   case "show": {
     const g = find(a);
-    console.log(`${line(g)}\n  id ${g.id}\n  price ${g.fiat ? `${g.fiat.amount} ${g.fiat.currency}` : `${g.price} (${g.decimals} decimals) token ${g.token}`}${g.receiptHash ? `\n  receipt hash ${g.receiptHash}` : ""}${g.contact ? `\n  contact ${g.contact}` : ""}${g.paidTx ? `\n  paid in ${g.paidTx}` : ""}${store.bookingNotices(g.id).length ? `\n  notices sent: ${store.bookingNotices(g.id).join(", ")}` : ""}${g.note ? `\n  note: ${g.note}` : ""}`);
+    console.log(`${line(g)}\n  id ${g.id}\n  price ${g.fiat ? `${g.fiat.amount} ${g.fiat.currency}` : `${g.price} (${g.decimals} decimals) token ${g.token}`}${g.receiptHash ? `\n  receipt hash ${g.receiptHash}` : ""}${g.ownerShareIdr ? `\n  agent owner's share Rp ${g.ownerShareIdr.toLocaleString("id-ID")}${g.payoutRef ? `, paid out: ${g.payoutRef}` : ", not paid out yet"}` : ""}${g.contact ? `\n  contact ${g.contact}` : ""}${g.paidTx ? `\n  paid in ${g.paidTx}` : ""}${store.bookingNotices(g.id).length ? `\n  notices sent: ${store.bookingNotices(g.id).join(", ")}` : ""}${g.note ? `\n  note: ${g.note}` : ""}`);
     if (g.status === "quoted" && (payments || g.fiat)) console.log(`\n${paymentInstructions(g, payments ?? NATIVE, g.lang)}`);
     break;
   }
@@ -177,9 +178,37 @@ switch (cmd) {
     }
     const cfg = loadChainConfig();
     if (!cfg.paymentsAddress) throw new Error("set NOX_PAYMENTS_ADDRESS");
-    const tx = await recordFiatGameNightOnChain(operatorFrom(cfg), cfg.paymentsAddress, g.id, g.chainAgentId, hash);
-    store.updateBooking(g.id, { status: "paid", paidTx: tx, receiptHash: hash });
-    console.log(`${line({ ...g, status: "paid" })}  (tx ${tx})`);
+    if (g.chainAgentId && !cfg.agentRegistryAddress) throw new Error("set NOX_AGENT_REGISTRY_ADDRESS to fix the agent owner's share");
+    const op = operatorFrom(cfg);
+    // The agent owner's rupiah share is fixed now, from the agent's share on chain (paid out by transfer).
+    const share = g.chainAgentId ? ownerShareIdr(g.fiat.amount, await shareOf(op, cfg.agentRegistryAddress!, g.chainAgentId)) : null;
+    const tx = await recordFiatGameNightOnChain(op, cfg.paymentsAddress, g.id, g.chainAgentId, hash);
+    store.updateBooking(g.id, { status: "paid", paidTx: tx, receiptHash: hash, ownerShareIdr: share });
+    console.log(`${line({ ...g, status: "paid" })}  (tx ${tx})${share ? `\nAgent owner's share: Rp ${share.toLocaleString("id-ID")} (npm run gamenight -- payouts)` : ""}`);
+    break;
+  }
+  case "payouts": {
+    // Rupiah shares owed to agent owners, by owner wallet (their bank details are kept outside Nox).
+    const owed = store.listBookings().filter((x) => (x.ownerShareIdr ?? 0) > 0 && !x.payoutRef && (x.status === "paid" || x.status === "played"));
+    const byOwner = new Map<string, Booking[]>();
+    for (const x of owed) {
+      const owner = (x.agentId !== null && store.getAgent(x.agentId)?.owner) || `agent #${x.chainAgentId}`;
+      byOwner.set(owner, [...(byOwner.get(owner) ?? []), x]);
+    }
+    if (!byOwner.size) console.log("No rupiah shares owed.");
+    for (const [owner, list] of byOwner) {
+      console.log(`${owner}: Rp ${list.reduce((n, x) => n + x.ownerShareIdr!, 0).toLocaleString("id-ID")}`);
+      for (const x of list) console.log(`  ${x.id.slice(0, 10)}…  ${x.client}  agent #${x.chainAgentId}  Rp ${x.ownerShareIdr!.toLocaleString("id-ID")}`);
+    }
+    break;
+  }
+  case "paid-out": {
+    const g = find(a);
+    if (!g.ownerShareIdr) throw new Error(`${g.id} owes no agent share`);
+    if (g.payoutRef) throw new Error(`${g.id} was already paid out (${g.payoutRef})`);
+    if (!b?.trim()) throw new Error('usage: paid-out <booking> "<transfer reference>"');
+    store.updateBooking(g.id, { payoutRef: `${b.trim()} @ ${new Date().toISOString()}` });
+    console.log(`${g.id}: agent share Rp ${g.ownerShareIdr.toLocaleString("id-ID")} paid out (${b.trim()}).`);
     break;
   }
   case "set-chat": {
@@ -196,6 +225,6 @@ switch (cmd) {
     break;
   }
   default:
-    console.log("commands: quote | list | show <booking> | sync | set-chat <booking> <chat-id> | cancel <booking> <reason> | forget-contact <booking> | theme <file.json> | themes | paid-idr <booking> <receipt> [--send]");
+    console.log("commands: quote | list | show <booking> | sync | set-chat <booking> <chat-id> | cancel <booking> <reason> | forget-contact <booking> | theme <file.json> | themes | paid-idr <booking> <receipt> [--send] | payouts | paid-out <booking> <ref>");
 }
 store.close();
