@@ -108,11 +108,19 @@ export function createApi(o: ApiOptions): Server {
         return { game, events: store.eventsOfGame(id as Hex) };
       }
       case "agents": {
-        // Agent Marketplace revenue, public on chain: per agent, owner and token (amounts in wei, as strings).
-        if (id !== "revenue") break;
-        const { agents, owners } = store.paymentLedger();
         const str = <T extends object>(x: T) => Object.fromEntries(Object.entries(x).map(([k, v]) => [k, typeof v === "bigint" ? v.toString() : v]));
-        return { agents: agents.map(str), owners: owners.map(str) };
+        // Agent Marketplace revenue, public on chain: per agent, owner and token (amounts in wei, as strings).
+        if (id === "revenue") {
+          const { agents, owners } = store.paymentLedger();
+          return { agents: agents.map(str), owners: owners.map(str) };
+        }
+        // D16 from NoxAgentRegistry (F18-D01): all agents, or one by its on-chain id.
+        const all = store.agents().map((x) => ({ ...x, revenue: x.revenue.map(str) }));
+        if (!id) return { agents: all };
+        if (!/^\d{1,9}$/.test(id)) throw new HttpError(400, "agent id must be a whole number");
+        const one = all.find((x) => x.agentId === Number(id));
+        if (!one) throw new HttpError(404, "agent not registered (or not indexed yet)");
+        return one;
       }
       case "players":
         if (!id || !ADDRESS.test(id)) throw new HttpError(400, "address must be 0x + 40 hex characters");

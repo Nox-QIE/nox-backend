@@ -52,7 +52,9 @@ describe("public API", () => {
     const health = await (await get("/v1/health")).json();
     expect(health).toEqual({ ok: true, network: "testnet", chainId: 1983, indexedBlock: 500, reconciliation: null, paymentsReconciliation: null });
     expect(await (await get("/v1/agents/revenue")).json()).toEqual({ agents: [], owners: [] });
-    expect((await get("/v1/agents")).status).toBe(404);
+    expect(await (await get("/v1/agents")).json()).toEqual({ agents: [] }); // D16 (F18-D01); none indexed here
+    expect((await get("/v1/agents/x")).status).toBe(400);
+    expect((await get("/v1/agents/9")).status).toBe(404);
     const stats = await (await get("/v1/stats")).json();
     expect(stats).toMatchObject({ players: 3, finishedGames: 1, cancelledGames: 1, credits: 70, indexedBlock: 500 });
     const board = await (await get("/v1/leaderboard?limit=2")).json();

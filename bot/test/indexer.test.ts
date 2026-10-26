@@ -1,8 +1,8 @@
 import { keccak256, toHex, type Abi, type Hex } from "viem";
 import { describe, expect, it } from "vitest";
-import { NoxCreditsAbi, NoxGameAbi, NoxPaymentsAbi } from "../src/chain/contracts.js";
+import { NoxAgentRegistryAbi, NoxCreditsAbi, NoxGameAbi, NoxPaymentsAbi } from "../src/chain/contracts.js";
 import { EventIndexer, EventStore, MAX_BLOCK_RANGE, reconcileCredits, reconcilePayments } from "../src/chain/indexer.js";
-import { ava, ben, CREDITS, cy, FakeChain, GAME, game, gameId, minted, pay, PAYMENTS, playGame } from "./chain-fakes.js";
+import { ava, ben, CREDITS, cy, FakeChain, GAME, game, gameId, minted, pay, PAYMENTS, playGame, reg, REGISTRY } from "./chain-fakes.js";
 
 function setup(fromBlock = 100n) {
   const chain = new FakeChain();
@@ -238,5 +238,39 @@ describe("event indexer", () => {
     ]);
     expect(store.passPurchases(ben, 2_000)[1]).toMatchObject({ periods: 1, receiptHash: receipt, amount: null, token: null, expiresAt: 9_100_000_000 });
     expect(store.passPurchases(ava, 2_000)[0]).toMatchObject({ amount: 10n ** 18n, periods: 1 });
+  });
+
+  it("mirrors D16 from NoxAgentRegistry: owner, mode, status, persona hash, share and revenue (F18-D01)", async () => {
+    const chain = new FakeChain();
+    const store = new EventStore(":memory:");
+    const indexer = new EventIndexer({
+      client: chain,
+      store,
+      contracts: [
+        { name: "NoxAgentRegistry", address: REGISTRY, abi: NoxAgentRegistryAbi as Abi },
+        { name: "NoxPayments", address: PAYMENTS, abi: NoxPaymentsAbi as Abi },
+      ],
+      fromBlock: 100n,
+      confirmations: 0n,
+    });
+    const h1 = keccak256(toHex("persona-1"));
+    const h2 = keccak256(toHex("persona-2"));
+    chain.logs.push(
+      reg("AgentRegistered", { agentId: 1n, owner: ben, mode: 1, metadataHash: h1 }, 110n),
+      reg("AgentRegistered", { agentId: 2n, owner: cy, mode: 2, metadataHash: h1 }, 111n),
+      reg("ShareChanged", { agentId: 2n, shareBps: 5000 }, 112n), // custom share
+      reg("ShareChanged", { agentId: 0n, shareBps: 2500 }, 113n), // new default: agent 1 follows it
+      reg("AgentStatusChanged", { agentId: 2n, status: 2 }, 114n),
+      reg("AgentOwnerChanged", { agentId: 1n, owner: ava }, 115n),
+      reg("AgentMetadataUpdated", { agentId: 2n, metadataHash: h2 }, 116n),
+      pay("AgentCredited", { agentId: 1n, owner: ava, token: "0x0000000000000000000000000000000000000000", amount: 25n * 10n ** 16n }, 117n),
+    );
+    chain.head = 200n;
+    await indexer.syncOnce();
+    const [a1, a2] = store.agents();
+    expect(a1).toMatchObject({ agentId: 1, owner: ava.toLowerCase(), mode: "hosted", status: "active", metadataHash: h1, shareBps: 2500, customShare: false });
+    expect(a2).toMatchObject({ agentId: 2, owner: cy.toLowerCase(), mode: "endpoint", status: "suspended", metadataHash: h2, shareBps: 5000, customShare: true });
+    expect(a1!.revenue).toEqual([expect.objectContaining({ token: "0x0000000000000000000000000000000000000000", total: 25n * 10n ** 16n })]);
+    expect(a2!.revenue).toEqual([]);
   });
 });
