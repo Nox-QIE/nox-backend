@@ -25,6 +25,7 @@ import type { GameLedger } from "../src/chain/ledger.js";
 import { recoverGames } from "../src/recovery.js";
 import { Registry } from "../src/registry.js";
 import { TASK_SCAM } from "../src/scenarios.js";
+import { AGENT_TERMS } from "../src/agents.js";
 import { SqliteStore, storeKey } from "../src/store.js";
 import { FakeMessenger, FakeScheduler } from "./fakes.js";
 
@@ -311,7 +312,7 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
 
     const store = new SqliteStore(":memory:");
     const owner = "0x00000000000000000000000000000000000a9e01" as const;
-    const agentId = store.addAgent(owner, { name: "Noir", tagline: "", style: "x".repeat(50), examples: [], langs: ["en"] });
+    const agentId = store.addAgent(owner, { name: "Noir", tagline: "", style: "x".repeat(50), examples: [], langs: ["en"] }, AGENT_TERMS.version);
     const op = operatorFrom({ network: "local", rpcUrl: RPC, operatorKey: OPERATOR_KEY, dripWei: 0n, minWei: 0n, dailyPerPlayerWei: 0n, dailyBudgetWei: 0n, treasuryAlertWei: 0n, paymentsFromBlock: 0n }, 50);
     store.setChainAgentId(agentId, await registerAgentOnChain(op, registry, owner, store.getAgent(agentId)!.persona));
     for (const a of [agentId, agentId, agentId, null]) store.recordFinishedGame({ agentId: a, players: 6, hostId: 1, chainGameId: null });

@@ -16,7 +16,19 @@ export interface AgentRecord {
   mode?: "persona" | "endpoint";
   /** https URL of the owner's service (endpoint mode). Its signing secret stays in the store, encrypted. */
   endpoint?: string | null;
+  /** Version of the agent terms (docs/agent-terms.md) the owner accepted; null when never recorded. */
+  termsVersion?: number | null;
 }
+
+/**
+ * The agent owner terms and content policy in force (docs/agent-terms.md, NOX-L0-13). Lobbies offer
+ * only agents whose owner accepted this version, so raising it hides every agent until its owner
+ * accepts the new text (`agents.ts accept-terms <id>`).
+ */
+export const AGENT_TERMS = { version: 1, date: "2026-10-26" } as const;
+
+/** Names and taglines may not pose as Nox, QIE, Telegram or staff (content policy, section 2). */
+const IMPERSONATION = /\b(nox|qie|telegram|admin|administrator|moderator|official|resmi|support)\b/i;
 
 const LIMITS = { name: [2, 32], tagline: [0, 80], style: [40, 1200], example: [0, 200], examples: 3 } as const;
 
@@ -38,6 +50,10 @@ export function checkPersona(p: Persona): string[] {
   for (const [field, text] of [["name", p.name], ["tagline", p.tagline], ["style", p.style], ...p.examples.map((e, i) => [`example ${i + 1}`, e])] as [string, string][]) {
     const problem = contentProblem(text);
     if (problem) problems.push(`${field}: no ${problem}`);
+  }
+  for (const [field, text] of [["name", p.name], ["tagline", p.tagline]] as const) {
+    const word = IMPERSONATION.exec(text)?.[1];
+    if (word) problems.push(`${field}: may not pose as Nox, QIE, Telegram or staff ("${word}")`);
   }
   return problems;
 }

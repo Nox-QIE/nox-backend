@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Hex } from "viem";
-import type { AgentRecord, Persona } from "./agents.js";
+import { AGENT_TERMS, type AgentRecord, type Persona } from "./agents.js";
 import type { LedgerNightReveal, LedgerRoleReveal } from "./chain/ledger.js";
 import type { TxRecord } from "./chain/viem-ledger.js";
 import type { NarratorReport } from "./narrator.js";
@@ -62,11 +62,15 @@ export interface Store {
   purgeSettledSecrets(beforeMs: number): number;
   /** Right to erasure for off-chain data: forget a player who pressed Start and unlink them as host. */
   forgetUser(userId: number): void;
-  addAgent(owner: string, persona: Persona): number;
+  /** `termsVersion`: the agent terms version the owner accepted (AGENT_TERMS). */
+  addAgent(owner: string, persona: Persona, termsVersion: number): number;
   /** An agent backed by its owner's https service; `secret` signs Nox's requests and is stored encrypted. */
-  addEndpointAgent(owner: string, persona: Persona, endpoint: string, secret: string): number;
+  addEndpointAgent(owner: string, persona: Persona, endpoint: string, secret: string, termsVersion: number): number;
+  /** Record that the owner accepted agent terms `version`. */
+  acceptAgentTerms(id: number, version: number): void;
   agentSecret(id: number): string | null;
   getAgent(id: number): AgentRecord | null;
+  /** `activeOnly`: what lobbies may offer, active agents whose owner accepted the current terms. */
   listAgents(activeOnly?: boolean): AgentRecord[];
   setAgentStatus(id: number, status: AgentRecord["status"]): void;
   setChainAgentId(id: number, chainAgentId: number): void;
@@ -168,7 +172,9 @@ export class SqliteStore implements Store {
         created_at INTEGER NOT NULL,
         mode TEXT NOT NULL DEFAULT 'persona',
         endpoint TEXT,
-        secret BLOB
+        secret BLOB,
+        terms_version INTEGER,
+        terms_accepted_at INTEGER
       );
       CREATE TABLE IF NOT EXISTS finished_games (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -245,6 +251,9 @@ export class SqliteStore implements Store {
     if (!cols.has("mode")) this.db.exec("ALTER TABLE agents ADD COLUMN mode TEXT NOT NULL DEFAULT 'persona'");
     if (!cols.has("endpoint")) this.db.exec("ALTER TABLE agents ADD COLUMN endpoint TEXT");
     if (!cols.has("secret")) this.db.exec("ALTER TABLE agents ADD COLUMN secret BLOB");
+    // Agents added before the owner terms (L0-13) have none recorded, so lobbies hide them until accepted.
+    if (!cols.has("terms_version")) this.db.exec("ALTER TABLE agents ADD COLUMN terms_version INTEGER");
+    if (!cols.has("terms_accepted_at")) this.db.exec("ALTER TABLE agents ADD COLUMN terms_accepted_at INTEGER");
     const userCols = new Set((this.db.prepare("PRAGMA table_info(users)").all() as { name: string }[]).map((c) => c.name));
     if (!userCols.has("locale")) this.db.exec("ALTER TABLE users ADD COLUMN locale TEXT");
     if (!userCols.has("address")) this.db.exec("ALTER TABLE users ADD COLUMN address TEXT");
@@ -359,18 +368,26 @@ export class SqliteStore implements Store {
     }));
   }
 
-  addAgent(owner: string, persona: Persona): number {
+  addAgent(owner: string, persona: Persona, termsVersion: number): number {
+    const now = Date.now();
     const r = this.db
-      .prepare("INSERT INTO agents (owner, persona, status, created_at) VALUES (?, ?, 'active', ?)")
-      .run(owner, JSON.stringify(persona), Date.now());
+      .prepare("INSERT INTO agents (owner, persona, status, created_at, terms_version, terms_accepted_at) VALUES (?, ?, 'active', ?, ?, ?)")
+      .run(owner, JSON.stringify(persona), now, termsVersion, now);
     return Number(r.lastInsertRowid);
   }
 
-  addEndpointAgent(owner: string, persona: Persona, endpoint: string, secret: string): number {
+  addEndpointAgent(owner: string, persona: Persona, endpoint: string, secret: string, termsVersion: number): number {
+    const now = Date.now();
     const r = this.db
-      .prepare("INSERT INTO agents (owner, persona, status, created_at, mode, endpoint, secret) VALUES (?, ?, 'active', ?, 'endpoint', ?, ?)")
-      .run(owner, JSON.stringify(persona), Date.now(), endpoint, this.seal(secret));
+      .prepare(
+        "INSERT INTO agents (owner, persona, status, created_at, mode, endpoint, secret, terms_version, terms_accepted_at) VALUES (?, ?, 'active', ?, 'endpoint', ?, ?, ?, ?)",
+      )
+      .run(owner, JSON.stringify(persona), now, endpoint, this.seal(secret), termsVersion, now);
     return Number(r.lastInsertRowid);
+  }
+
+  acceptAgentTerms(id: number, version: number) {
+    this.db.prepare("UPDATE agents SET terms_version = ?, terms_accepted_at = ? WHERE id = ?").run(version, Date.now(), id);
   }
 
   agentSecret(id: number): string | null {
@@ -386,8 +403,18 @@ export class SqliteStore implements Store {
     chain_agent_id: number | null;
     mode: "persona" | "endpoint";
     endpoint: string | null;
+    terms_version: number | null;
   }): AgentRecord {
-    return { id: r.id, owner: r.owner, persona: JSON.parse(r.persona) as Persona, status: r.status, chainAgentId: r.chain_agent_id, mode: r.mode, endpoint: r.endpoint };
+    return {
+      id: r.id,
+      owner: r.owner,
+      persona: JSON.parse(r.persona) as Persona,
+      status: r.status,
+      chainAgentId: r.chain_agent_id,
+      mode: r.mode,
+      endpoint: r.endpoint,
+      termsVersion: r.terms_version,
+    };
   }
 
   getAgent(id: number): AgentRecord | null {
@@ -396,8 +423,10 @@ export class SqliteStore implements Store {
   }
 
   listAgents(activeOnly = false): AgentRecord[] {
-    const sql = activeOnly ? "SELECT * FROM agents WHERE status = 'active' ORDER BY id" : "SELECT * FROM agents ORDER BY id";
-    return (this.db.prepare(sql).all() as Parameters<SqliteStore["toAgent"]>[0][]).map((r) => this.toAgent(r));
+    const rows = activeOnly
+      ? this.db.prepare("SELECT * FROM agents WHERE status = 'active' AND terms_version >= ? ORDER BY id").all(AGENT_TERMS.version)
+      : this.db.prepare("SELECT * FROM agents ORDER BY id").all();
+    return (rows as Parameters<SqliteStore["toAgent"]>[0][]).map((r) => this.toAgent(r));
   }
 
   setAgentStatus(id: number, status: AgentRecord["status"]) {
