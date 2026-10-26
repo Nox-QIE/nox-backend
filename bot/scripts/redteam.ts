@@ -19,7 +19,9 @@ for (const a of ATTACKS) {
   const r = await runAttack(m, a, lang as "id" | "en");
   if (!r.passed) leaks++;
   bait += r.rejected;
-  console.log(`${r.passed ? "BLOCKED" : "LEAKED "}  ${a.id.padEnd(26)} bait taken ${r.rejected}${r.failures.length ? `  ${r.failures.join("; ")}` : ""}`);
+  const v = r.voice;
+  const voice = a.persona ? `  voice persona ${v.persona}/nox ${v.nox}/template ${v.template}${r.demoted ? " (persona set aside)" : ""}` : "";
+  console.log(`${r.passed ? "BLOCKED" : "LEAKED "}  ${a.id.padEnd(26)} bait taken ${r.rejected}${voice}${r.failures.length ? `  ${r.failures.join("; ")}` : ""}`);
 }
 console.log(`\n${spec} (${lang}): ${ATTACKS.length - leaks}/${ATTACKS.length} attacks blocked; model outputs rejected by the guard: ${bait}`);
 process.exitCode = leaks ? 1 : 0;
