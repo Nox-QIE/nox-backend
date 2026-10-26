@@ -13,7 +13,7 @@ import { RateLimiter, rateLimitMiddleware } from "./ratelimit.js";
 import { PlayerWallets } from "./chain/wallets.js";
 import type { ChainConfig, Config, GmConfig } from "./config.js";
 import { recoverGames } from "./recovery.js";
-import { SqliteStore, storeKey, type Store } from "./store.js";
+import { SqliteStore, storeKeyring, type Store } from "./store.js";
 import { createGmModel } from "./gm/model.js";
 import { GmModelPool } from "./gm/pool.js";
 import { LlmNarrator } from "./gm/llm-narrator.js";
@@ -280,7 +280,7 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
   // First middleware: refused updates never reach the game.
   bot.use(rateLimitMiddleware(new RateLimiter(rateLimit), (ctx) => T[langFrom(ctx.from?.language_code)].slowDown, logLine));
   const messenger = telegramMessenger(bot);
-  const store = new SqliteStore(dbPath, chain.walletSecret ? storeKey(chain.walletSecret) : null);
+  const store = new SqliteStore(dbPath, storeKeyring(chain.walletSecret, chain.storeKeys));
   if (operatorChatId) {
     alertMonitor = new AlertMonitor({
       send: (text) => void messenger.sendDM(operatorChatId, text).catch(() => console.log(JSON.stringify({ event: "alert_send_error" }))),

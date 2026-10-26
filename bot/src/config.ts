@@ -1,3 +1,4 @@
+import { storeKeyring } from "./store-keys.js";
 import type { GmProvider } from "./gm/model.js";
 import { DEFAULT_TIMINGS, type Timings } from "./ports.js";
 import { parseRateLimit } from "./ratelimit.js";
@@ -35,6 +36,8 @@ export interface ChainConfig {
   paymentsFromBlock: bigint;
   operatorKey?: `0x${string}`;
   walletSecret?: string;
+  /** Versioned store keys, "2:<hex>,1:<hex>" (F01-D06); version 0 comes from the wallet secret. */
+  storeKeys?: string;
   /** Gas drip in wei: top a player up to dripWei when below minWei. */
   dripWei: bigint;
   minWei: bigint;
@@ -236,6 +239,10 @@ export function loadChainConfig(env: NodeJS.ProcessEnv = process.env): ChainConf
     throw new Error("NOX_WALLET_SECRET must be at least 32 bytes of hex (openssl rand -hex 32)");
   }
   c.walletSecret = env.NOX_WALLET_SECRET;
+  if (env.NOX_STORE_KEYS) {
+    storeKeyring(c.walletSecret, env.NOX_STORE_KEYS); // throws on a bad entry, at startup
+    c.storeKeys = env.NOX_STORE_KEYS;
+  }
   return c;
 }
 

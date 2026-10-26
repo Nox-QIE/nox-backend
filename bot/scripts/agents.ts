@@ -17,14 +17,14 @@ import { readFileSync } from "node:fs";
 import { AGENT_TERMS, checkPersona, HEALTH, isAddress, type Persona } from "../src/agents.js";
 import { operatorFrom, registerAgentOnChain } from "../src/chain/operator.js";
 import { loadChainConfig } from "../src/config.js";
-import { SqliteStore, storeKey } from "../src/store.js";
+import { SqliteStore, storeKeyring } from "../src/store.js";
 import { checkEndpointUrl, EndpointModel, newEndpointSecret, safeLookup } from "../src/gm/endpoint.js";
 import { checkNarration } from "../src/gm/guard.js";
 import { userPrompt } from "../src/gm/prompt.js";
 
 // The key (from NOX_WALLET_SECRET) seals endpoint secrets, as in the bot.
 const secretHex = process.env.NOX_WALLET_SECRET;
-const store = new SqliteStore(process.env.NOX_DB_PATH || "data/nox.db", secretHex ? storeKey(secretHex) : null);
+const store = new SqliteStore(process.env.NOX_DB_PATH || "data/nox.db", storeKeyring(secretHex, process.env.NOX_STORE_KEYS));
 const args = process.argv.slice(2).filter((x) => !x.startsWith("--"));
 const [cmd, a, b] = args;
 const TERMS = `docs/agent-terms.md v${AGENT_TERMS.version} (${AGENT_TERMS.date})`;
