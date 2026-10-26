@@ -406,6 +406,70 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     expect(logs.filter((l) => l.event === "chain_error").map((l) => l.step)).toEqual(["start", "cancel"]);
   }, 60_000);
 
+  /** A running 5-player game straight through the ledger, with its role reveals. */
+  async function runningGame(seed: number, users: number[], gameId: Hex, extra: Partial<ConstructorParameters<typeof ViemLedger>[0]> = {}) {
+    const logs: Record<string, unknown>[] = [];
+    const settled: [Hex, string][] = [];
+    const disputes: [Hex, string, string][] = [];
+    const wallets = new PlayerWallets(Uint8Array.from({ length: 32 }, (_, i) => seed + i));
+    const ledger = new ViemLedger({
+      chain,
+      rpcUrl: RPC,
+      gameAddress,
+      operatorKey: OPERATOR_KEY,
+      wallets,
+      minBalance: 10n ** 15n,
+      dripAmount: 10n ** 16n,
+      pollingMs: 50,
+      retryDelayMs: 10,
+      log: (l) => logs.push(l),
+      onSettled: (id, outcome) => settled.push([id, outcome]),
+      onDisputed: (id, reason, detail) => disputes.push([id, reason, detail]),
+      ...extra,
+    });
+    const { commitRoles } = await import("@nox/shared/crypto-spec");
+    const names = ["werewolf", "seer", "doctor", "villager", "villager"] as const;
+    const codes = { villager: 1, werewolf: 2, seer: 3, doctor: 4 } as const;
+    const c = commitRoles(gameId, users.map((u, i) => ({ player: wallets.address(u), role: names[i]! as never })));
+    ledger.startGame(gameId, ("0x" + "00".repeat(32)) as Hex, users, c.root);
+    await ledger.idle();
+    const reveals = c.players.map((p, i) => ({ userId: users[i]!, role: codes[names[i]!], salt: p.salt as Hex, proof: p.proof as Hex[] }));
+    return { ledger, logs, settled, disputes, reveals };
+  }
+
+  it("reports its own bad reveal on-chain as Disputed instead of cancelling, without retrying", async () => {
+    const gameId = ("0x" + "d1".repeat(32)) as Hex;
+    const { ledger, logs, settled, disputes, reveals } = await runningGame(260, [901, 902, 903, 904, 905], gameId);
+    // A bug swaps one salt: the reveal no longer matches the committed root.
+    const bad = reveals.map((r, i) => (i === 2 ? { ...r, salt: ("0x" + "ee".repeat(32)) as Hex } : r));
+    ledger.finalize(gameId, bad, [], ("0x" + "01".repeat(32)) as Hex, 1);
+    await ledger.idle();
+
+    expect(await ledger.statusOf(gameId)).toBe(5); // Disputed
+    expect(settled).toEqual([[gameId, "disputed"]]);
+    expect(disputes).toEqual([[gameId, "reveal_mismatch", "BadReveal"]]);
+    expect(logs.filter((l) => l.event === "chain_error")).toEqual([]);
+    expect(logs.filter((l) => l.event === "chain_retry" && l.what === "revealAndFinalize")).toEqual([]);
+    const events = await publicClient.getContractEvents({ address: gameAddress, abi: NoxGameAbi, eventName: "GameDisputed", args: { gameId } });
+    expect(events[0]!.args).toMatchObject({ reason: 1, detail: "BadReveal" });
+  }, 60_000);
+
+  it("settles as disputed when anyone claimed the reveal timeout first", async () => {
+    const gameId = ("0x" + "d2".repeat(32)) as Hex;
+    const { ledger, settled, disputes, logs, reveals } = await runningGame(290, [911, 912, 913, 914, 915], gameId);
+    // Anvil's second dev account plays a stranger who flags the silent game after 6 hours.
+    const stranger = createWalletClient({ account: privateKeyToAccount("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"), chain, transport: http(RPC) });
+    await publicClient.request({ method: "evm_increaseTime" as never, params: [6 * 3600 + 1] as never });
+    await publicClient.request({ method: "evm_mine" as never, params: [] as never });
+    await publicClient.waitForTransactionReceipt({ hash: await stranger.writeContract({ address: gameAddress, abi: NoxGameAbi, functionName: "claimRevealTimeout", args: [gameId] }) });
+
+    ledger.finalize(gameId, reveals, [], ("0x" + "01".repeat(32)) as Hex, 1);
+    await ledger.idle();
+    expect(settled).toEqual([[gameId, "disputed"]]);
+    expect(disputes).toEqual([[gameId, "reveal_timeout", "claimed on-chain before the reveal"]]);
+    expect(logs.filter((l) => l.event === "chain_error")).toEqual([]);
+  }, 60_000);
+
   it("indexes every game event and its credits match NoxCredits.balanceOf for each player", async () => {
     const store = new EventStore(":memory:");
     const indexer = new EventIndexer({

@@ -84,8 +84,10 @@ export interface ViemLedgerOptions {
   maxAttempts?: number;
   /** Wait before retry n is n × this (ms). Default 1500. */
   retryDelayMs?: number;
-  /** Called once a game is finalized or cancelled on-chain (to mark it settled in the store). */
-  onSettled?: (gameId: Hex, outcome: "finalized" | "cancelled") => void;
+  /** Called once a game is finalized, cancelled or disputed on-chain (to mark it settled in the store). */
+  onSettled?: (gameId: Hex, outcome: "finalized" | "cancelled" | "disputed") => void;
+  /** A game ended as Disputed: the reveal failed verification, or someone claimed the reveal timeout. */
+  onDisputed?: (gameId: Hex, reason: "reveal_mismatch" | "reveal_timeout", detail: string) => void;
   log?: (line: Record<string, unknown>) => void;
 }
 
@@ -137,6 +139,7 @@ export const GAS_FLOOR: Record<string, bigint> = {
   recordRound: 90_000n,
   revealAndFinalize: 1_800_000n,
   cancelGame: 60_000n,
+  reportDispute: 60_000n,
 };
 
 /** Gas limit to send: the node's estimate plus 25%, but never below the function's floor. */
@@ -153,16 +156,32 @@ class DripRefusedError extends Error {}
 
 const STATUS_FINALIZED = 3;
 const STATUS_CANCELLED = 4;
+const STATUS_DISPUTED = 5;
+
+/** Reverts that mean the reveal itself does not match the commitments: retrying cannot help. */
+const REVEAL_MISMATCH = new Set(["BadReveal", "BadNightReveal", "RevealCountMismatch"]);
+
+/** The contract's custom error behind a viem error, if any. */
+export function revertOf(err: unknown): { errorName: string; args: readonly unknown[] } | null {
+  const revert = err instanceof BaseError ? err.walk((e) => e instanceof ContractFunctionRevertedError) : null;
+  const data = (revert as ContractFunctionRevertedError | null)?.data;
+  return data ? { errorName: data.errorName, args: data.args ?? [] } : null;
+}
+
+/** The game was already marked Disputed on-chain (someone claimed the reveal timeout). */
+const isDisputedOnChain = (err: unknown) => {
+  const r = revertOf(err);
+  return r?.errorName === "WrongStatus" && Number(r.args[1]) === STATUS_DISPUTED;
+};
 
 /**
  * Whether a retry's revert shows the step already happened: the earlier attempt reached the chain
  * even though we saw an error (a lost RPC response, a node that answered late).
  */
 export function alreadyDone(functionName: string, err: unknown): boolean {
-  const revert = err instanceof BaseError ? err.walk((e) => e instanceof ContractFunctionRevertedError) : null;
-  const data = (revert as ContractFunctionRevertedError | null)?.data;
+  const data = revertOf(err);
   if (!data) return false;
-  const args = (data.args ?? []) as readonly (number | bigint)[];
+  const args = data.args as readonly (number | bigint)[];
   switch (data.errorName) {
     case "AlreadyExists":
       return functionName === "createGame";
@@ -177,7 +196,8 @@ export function alreadyDone(functionName: string, err: unknown): boolean {
       return (
         (functionName === "commitRoles" && actual >= 2) ||
         (functionName === "revealAndFinalize" && actual === STATUS_FINALIZED) ||
-        (functionName === "cancelGame" && actual === STATUS_CANCELLED)
+        (functionName === "cancelGame" && actual === STATUS_CANCELLED) ||
+        (functionName === "reportDispute" && actual === STATUS_DISPUTED)
       );
     }
     case "WrongRound":
@@ -277,18 +297,41 @@ export class ViemLedger implements GameLedger {
         target: this.addressOf(x.targetUserId),
         nonce: x.nonce,
       }));
-      await this.asOperator("revealAndFinalize", [gameId, r, n, resultHash, winner]);
-      this.gameQueues.delete(gameId);
-      this.o.onSettled?.(gameId, "finalized");
+      try {
+        await this.asOperator("revealAndFinalize", [gameId, r, n, resultHash, winner]);
+      } catch (e) {
+        const revert = revertOf(e);
+        if (revert && REVEAL_MISMATCH.has(revert.errorName)) {
+          // Our own reveal does not match what we committed: say so on-chain instead of cancelling.
+          await this.asOperator("reportDispute", [gameId, revert.errorName]);
+          return this.settle(gameId, "disputed", "reveal_mismatch", revert.errorName);
+        }
+        if (isDisputedOnChain(e)) return this.settle(gameId, "disputed", "reveal_timeout", "claimed on-chain before the reveal");
+        throw e;
+      }
+      this.settle(gameId, "finalized");
     });
   }
 
   cancel(gameId: Hex, reason: string) {
     this.enqueue(gameId, "cancel", async () => {
-      await this.asOperator("cancelGame", [gameId, reason]);
-      this.gameQueues.delete(gameId);
-      this.o.onSettled?.(gameId, "cancelled");
+      try {
+        await this.asOperator("cancelGame", [gameId, reason]);
+      } catch (e) {
+        if (isDisputedOnChain(e)) return this.settle(gameId, "disputed", "reveal_timeout", "claimed on-chain before the cancel");
+        throw e;
+      }
+      this.settle(gameId, "cancelled");
     });
+  }
+
+  private settle(gameId: Hex, outcome: "finalized" | "cancelled" | "disputed", reason?: "reveal_mismatch" | "reveal_timeout", detail = "") {
+    this.gameQueues.delete(gameId);
+    this.o.onSettled?.(gameId, outcome);
+    if (outcome === "disputed" && reason) {
+      this.o.log?.({ event: "game_disputed", gameId, reason, detail });
+      this.o.onDisputed?.(gameId, reason, detail);
+    }
   }
 
   // ------------------------------------------------------------ internals
@@ -350,6 +393,8 @@ export class ViemLedger implements GameLedger {
         return hash;
       } catch (e) {
         if (e instanceof TxRevertedError || e instanceof DripRefusedError) throw e;
+        // A reveal that does not match, or a game already disputed, will not change on a retry.
+        if (REVEAL_MISMATCH.has(revertOf(e)?.errorName ?? "") || isDisputedOnChain(e)) throw e;
         if (attempt > 1 && !hash && (await done(e))) {
           this.o.log?.({ event: "chain_retry_done", what, attempt });
           return null;

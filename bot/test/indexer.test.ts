@@ -86,6 +86,20 @@ describe("event indexer", () => {
     expect(store.eventsOfGame(gameId).map((e) => e.account)).toEqual([ben]);
   });
 
+  it("shows a disputed game as disputed, with its reason", async () => {
+    const { chain, store, indexer } = setup();
+    chain.logs.push(
+      game("GameCreated", { gameId, configHash: keccak256(toHex("cfg")) }, 150n),
+      game("PlayerJoined", { gameId, player: ava }, 151n),
+      game("GameDisputed", { gameId, reason: 2, detail: "no reveal before the deadline" }, 160n),
+    );
+    chain.head = 200n;
+    await indexer.syncOnce();
+    expect(store.game(gameId)).toMatchObject({ status: "disputed", endedTs: expect.any(Number), dispute: { reason: "reveal_timeout", detail: "no reveal before the deadline" } });
+    expect(store.player(ava).history[0]).toMatchObject({ status: "disputed", won: null });
+    expect(store.stats().disputedGames).toBe(1);
+  });
+
   it("skips logs it cannot decode", async () => {
     const { chain, store, indexer, logs } = setup();
     chain.logs.push({ address: GAME, blockNumber: 150n, transactionHash: keccak256("0x01"), logIndex: 0, topics: [keccak256(toHex("Nope()"))], data: "0x" });

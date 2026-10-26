@@ -1,5 +1,6 @@
 import { Bot, GrammyError, InlineKeyboard } from "grammy";
 import { randomInt } from "node:crypto";
+import type { Hex } from "viem";
 import { langFrom, T } from "./i18n.js";
 import { noLedger, type GameLedger } from "./chain/ledger.js";
 import { chainFor, ViemLedger } from "./chain/viem-ledger.js";
@@ -94,7 +95,7 @@ export function buildGmPool(gm: GmConfig): GmModelPool {
 
 const logLine = (l: Record<string, unknown>) => console.log(JSON.stringify(l));
 
-export function buildLedger(c: ChainConfig, log = logLine, store?: Store): GameLedger {
+export function buildLedger(c: ChainConfig, log = logLine, store?: Store, onDisputed?: (gameId: Hex, reason: string, detail: string) => void): GameLedger {
   if (c.network === "off") return noLedger;
   return new ViemLedger({
     chain: chainFor(c.network),
@@ -108,16 +109,45 @@ export function buildLedger(c: ChainConfig, log = logLine, store?: Store): GameL
     dripDailyBudget: c.dailyBudgetWei,
     log,
     ...(store ? { onSettled: (gameId, outcome) => store.setStatus(gameId, outcome) } : {}),
+    ...(onDisputed ? { onDisputed } : {}),
   });
 }
 
+/**
+ * A game ended as Disputed (F08-S03): tell its group that the result is on hold and DM the operator.
+ * The game's encrypted secrets stay in the store as evidence (disputed games are never purged).
+ */
+export async function alertDispute(a: {
+  messenger: Messenger;
+  store: Store;
+  gameId: Hex;
+  reason: string;
+  detail: string;
+  webUrl?: string;
+  operatorChatId?: number;
+}) {
+  const g = a.store.gameInfo(a.gameId);
+  const url = a.webUrl ? `${a.webUrl.replace(/\/+$/, "")}/game/?id=${a.gameId}` : null;
+  if (g) await a.messenger.sendGroup(g.chatId, T[g.lang].disputed(url));
+  if (a.operatorChatId) {
+    await a.messenger.sendDM(
+      a.operatorChatId,
+      `🚨 <b>Nox incident: game disputed</b>\nGame: <code>${a.gameId}</code>\nReason: ${a.reason} (${a.detail})\nGroup: ${g ? g.chatId : "unknown"}\nThe encrypted reveal data is kept in the store for investigation.`,
+    );
+  }
+}
+
 /** Wire Telegram updates to the registry. Nox stays a regular bot: no Mini App / Web App buttons. */
-export async function createNoxBot({ botToken, dbPath, webUrl, timings, gm, chain }: Config) {
+export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, timings, gm, chain }: Config) {
   const bot = new Bot(botToken);
   await bot.init();
   const messenger = telegramMessenger(bot);
   const store = new SqliteStore(dbPath, chain.walletSecret ? storeKey(chain.walletSecret) : null);
-  const ledger = buildLedger(chain, logLine, store);
+  const ledger = buildLedger(chain, logLine, store, (gameId, reason, detail) =>
+    void alertDispute({ messenger, store, gameId, reason, detail, ...(webUrl ? { webUrl } : {}), ...(operatorChatId ? { operatorChatId } : {}) }).catch((e) =>
+      logLine({ event: "dispute_alert_error", gameId, error: e instanceof Error ? e.message : String(e) }),
+    ),
+  );
   const registry = new Registry({
     messenger,
     scheduler: realScheduler,
