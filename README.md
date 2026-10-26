@@ -95,6 +95,7 @@ Kebijakan data penyedia LLM (training, retensi; Anthropic `verified`, Oxion `unv
 - Lonjakan error memicu DM ke `NOX_OPERATOR_CHAT_ID` (maks sekali per jam per jenis): ≥3 `chain_error` dalam 10 menit, ≥10 `gm_error`, ≥5 `bot_error`. Insiden tunggal (game disputed, saldo operator menipis, agent di-suspend) punya alert sendiri.
 - `npm run ops:report [hari]`: per hari game, kursi, biaya AI, porsi template, gas, tx gagal, latihan Scam Shield (selesai/dimulai), wallet baru, QIE yang di-drip (berapa untuk onboarding), dan saldo operator terakhir.
 - `npm run wallet:audit -- 0x<alamat>`: riwayat audit satu wallet pemain: kapan dibuat, tiap gas drip beserta alasannya (`onboarding` = gas pertama, `top-up`) dan jumlahnya, dan apakah akunnya dihapus (`/forget`). Hanya alamat: tanpa ID Telegram dan tanpa materi kunci.
+- `npm run gamenight -- quote <chat-id|-> <waktu ISO + zona> <harga> "<klien>" [--theme] [--agent] [--token --decimals] [--contact]`: penawaran Game Night B2B + instruksi bayar `payGameNight` untuk klien; `sync` mencocokkan event `GameNightPaid` dari indeks dengan penawaran (token, jumlah ≥ harga, agent) lalu menandai `paid`; `list`, `show`, `cancel`, `forget-contact`. Tanpa kunci: klien membayar dari wallet-nya sendiri.
 
 ## Pancingan diskusi
 

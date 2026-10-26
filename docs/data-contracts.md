@@ -119,12 +119,19 @@ See [agent-terms.md](agent-terms.md), section 3, for the full table. In short:
 
 ## E3 B2B client
 
-- **Out.**
-  - The Game Night engagement report: Markdown and JSON from `npm run report`, the same definitions as `/v1/engagement`. It holds counts only and hides counts of 1–2.
 - **In.**
-  - Payment for a Game Night on chain: `NoxPayments.payGameNight` (booking id, agent id, token, amount). It credits the agent owner's share directly.
-  - Booking, custom themes and sponsor funds: **not built** (portal planned, L0-08).
+  - Booking details given to the operator, who records them with `npm run gamenight -- quote` (table `bookings`, D10):
+    - client name, optional contact, Telegram group;
+    - start time with a time zone, language, theme, agent;
+    - price in QIE or a token.
+  - Payment on chain: the client calls `NoxPayments.payGameNight(bookingId, chainAgentId, token, amount)` from their own wallet. That credits the agent owner's share directly.
+  - `gamenight sync` matches the `GameNightPaid` event to the quote. Token, amount (at least the quote) and agent must all match, because the contract accepts any amount. A matching payment marks the booking `paid`; a mismatch is noted, and the booking stays `quoted`.
+  - Self-service booking and custom themes: **not built** (portal planned, L0-08).
+  - Sponsor funds: **not built**.
   - Rupiah payment: **not built** (E10).
+- **Out.**
+  - The quote and payment instructions: contract address, the exact `payGameNight` call and its value.
+  - The Game Night engagement report: Markdown and JSON from `npm run report`, the same definitions as `/v1/engagement`. It holds counts only and hides counts of 1–2.
 
 ## E9 QIE ID: not built
 

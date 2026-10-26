@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Hex } from "viem";
 import { AGENT_TERMS, type AgentRecord, type Persona } from "./agents.js";
+import type { Booking, BookingStatus } from "./bookings.js";
 import type { LedgerNightReveal, LedgerRoleReveal } from "./chain/ledger.js";
 import type { TxRecord } from "./chain/viem-ledger.js";
 import type { NarratorReport } from "./narrator.js";
@@ -88,6 +89,11 @@ export interface Store {
   walletAudit(address: string): WalletAuditEntry[];
   /** Wallets created per UTC day. */
   walletsCreated(fromMs: number, toMs: number): { day: string; wallets: number }[];
+  /** Game Night bookings (D10). */
+  addBooking(b: Booking): void;
+  getBooking(id: string): Booking | null;
+  listBookings(): Booking[];
+  updateBooking(id: string, u: { status?: BookingStatus; paidTx?: string | null; note?: string | null; chatId?: number | null; contact?: string | null }): void;
   recordOperatorBalance(wei: bigint): void;
   /** AI use per finished game (F09-D05). */
   recordGmGame(g: { gameId: Hex | null; agentId: number | null; players: number; report: NarratorReport }): void;
@@ -222,6 +228,24 @@ export class SqliteStore implements Store {
         at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS wallet_audit_address ON wallet_audit (address);
+      CREATE TABLE IF NOT EXISTS bookings (
+        id TEXT PRIMARY KEY,
+        client TEXT NOT NULL,
+        contact TEXT,
+        chat_id INTEGER,
+        starts_at INTEGER NOT NULL,
+        lang TEXT NOT NULL,
+        theme TEXT,
+        agent_id INTEGER,
+        chain_agent_id INTEGER NOT NULL,
+        token TEXT NOT NULL,
+        price TEXT NOT NULL,
+        decimals INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        paid_tx TEXT,
+        note TEXT,
+        created_at INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS operator_balances (at INTEGER PRIMARY KEY, wei TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS gm_games (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -402,6 +426,53 @@ export class SqliteStore implements Store {
         .prepare("SELECT date(at / 1000, 'unixepoch') AS day, COUNT(*) AS n FROM wallet_audit WHERE event = 'created' AND at >= ? AND at < ? GROUP BY day ORDER BY day")
         .all(fromMs, toMs) as { day: string; n: number }[]
     ).map((r) => ({ day: r.day, wallets: Number(r.n) }));
+  }
+
+  addBooking(b: Booking) {
+    this.db
+      .prepare(
+        "INSERT INTO bookings (id, client, contact, chat_id, starts_at, lang, theme, agent_id, chain_agent_id, token, price, decimals, status, paid_tx, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(b.id, b.client, b.contact, b.chatId, b.startsAt, b.lang, b.theme, b.agentId, b.chainAgentId, b.token, b.price.toString(), b.decimals, b.status, b.paidTx, b.note, b.createdAt);
+  }
+
+  private toBooking(r: Record<string, string | number | null>): Booking {
+    return {
+      id: r.id as Hex,
+      client: r.client as string,
+      contact: (r.contact as string | null) ?? null,
+      chatId: r.chat_id == null ? null : Number(r.chat_id),
+      startsAt: Number(r.starts_at),
+      lang: r.lang as Lang,
+      theme: (r.theme as string | null) ?? null,
+      agentId: r.agent_id == null ? null : Number(r.agent_id),
+      chainAgentId: Number(r.chain_agent_id),
+      token: r.token as Hex,
+      price: BigInt(r.price as string),
+      decimals: Number(r.decimals),
+      status: r.status as BookingStatus,
+      paidTx: (r.paid_tx as Hex | null) ?? null,
+      note: (r.note as string | null) ?? null,
+      createdAt: Number(r.created_at),
+    };
+  }
+
+  getBooking(id: string): Booking | null {
+    const r = this.db.prepare("SELECT * FROM bookings WHERE lower(id) = ?").get(id.toLowerCase()) as Record<string, string | number | null> | undefined;
+    return r ? this.toBooking(r) : null;
+  }
+
+  listBookings(): Booking[] {
+    return (this.db.prepare("SELECT * FROM bookings ORDER BY starts_at, id").all() as Record<string, string | number | null>[]).map((r) => this.toBooking(r));
+  }
+
+  updateBooking(id: string, u: { status?: BookingStatus; paidTx?: string | null; note?: string | null; chatId?: number | null; contact?: string | null }) {
+    const cols: Record<string, keyof typeof u> = { status: "status", paid_tx: "paidTx", note: "note", chat_id: "chatId", contact: "contact" };
+    const set = Object.entries(cols).filter(([, k]) => u[k] !== undefined);
+    if (!set.length) return;
+    this.db
+      .prepare(`UPDATE bookings SET ${set.map(([c]) => `${c} = ?`).join(", ")} WHERE lower(id) = ?`)
+      .run(...set.map(([, k]) => u[k] as string | number | null), id.toLowerCase());
   }
 
   forgetUser(userId: number) {
