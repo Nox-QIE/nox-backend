@@ -20,7 +20,8 @@
     "content:lock": "node --import tsx bot/scripts/content-lock.ts",
     "wallet:audit": "node --import tsx bot/scripts/wallet-audit.ts",
     "gamenight": "node --import tsx bot/scripts/gamenight.ts",
-    "sponsor:report": "node --import tsx bot/scripts/sponsor-report.ts"
+    "sponsor:report": "node --import tsx bot/scripts/sponsor-report.ts",
+    "store:rotate": "node --env-file=.env --import tsx bot/scripts/store-rotate.ts"
   },
   "devDependencies": {
     "typescript": "5.9",

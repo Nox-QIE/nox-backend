@@ -1,8 +1,8 @@
-import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Hex } from "viem";
+import { blobVersion, open as openBlob, seal as sealBlob, type StoreKeyring } from "./store-keys.js";
 import { AGENT_TERMS, type AgentRecord, type Persona } from "./agents.js";
 import type { Booking, BookingStatus } from "./bookings.js";
 import type { ClientTheme } from "./client-themes.js";
@@ -192,23 +192,22 @@ export interface WalletAuditEntry {
   at: number;
 }
 
-/** Store encryption key, derived from the wallet secret so there is no extra secret to manage. */
-export function storeKey(walletSecretHex: string): Buffer {
-  const secret = Buffer.from(walletSecretHex.replace(/^0x/, ""), "hex");
-  return Buffer.from(hkdfSync("sha256", secret, "nox-store-v1", "game-secrets", 32));
-}
+export { storeKey, storeKeyring, type StoreKeyring } from "./store-keys.js";
 
 /**
  * SQLite (node:sqlite) store. Player ids are plain; game secrets and finalize payloads are sealed
  * with AES-256-GCM (random 12-byte IV per write, auth tag checked on read).
  */
 export class SqliteStore implements Store {
+  private readonly ring: StoreKeyring | null;
   private readonly db: DatabaseSync;
 
   constructor(
     path: string,
-    private readonly key: Buffer | null = null,
+    /** A Buffer is key version 0 (from the wallet secret); a keyring adds versioned keys (F01-D06). */
+    key: Buffer | StoreKeyring | null = null,
   ) {
+    this.ring = Buffer.isBuffer(key) ? { current: 0, keys: new Map([[0, key]]) } : key;
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
     this.db.exec(`
@@ -370,19 +369,48 @@ export class SqliteStore implements Store {
   }
 
   private seal(value: unknown): Buffer {
-    if (!this.key) throw new Error("store has no encryption key (NOX_WALLET_SECRET) for game secrets");
-    const iv = randomBytes(12);
-    const c = createCipheriv("aes-256-gcm", this.key, iv);
-    const body = Buffer.concat([c.update(JSON.stringify(value), "utf8"), c.final()]);
-    return Buffer.concat([iv, c.getAuthTag(), body]);
+    if (!this.ring) throw new Error("store has no encryption key (NOX_WALLET_SECRET / NOX_STORE_KEYS) for game secrets");
+    return sealBlob(this.ring, value);
   }
 
   private open<T>(blob: Uint8Array): T {
-    if (!this.key) throw new Error("store has no encryption key (NOX_WALLET_SECRET) for game secrets");
-    const b = Buffer.from(blob);
-    const d = createDecipheriv("aes-256-gcm", this.key, b.subarray(0, 12));
-    d.setAuthTag(b.subarray(12, 28));
-    return JSON.parse(Buffer.concat([d.update(b.subarray(28)), d.final()]).toString("utf8")) as T;
+    if (!this.ring) throw new Error("store has no encryption key (NOX_WALLET_SECRET / NOX_STORE_KEYS) for game secrets");
+    return openBlob<T>(this.ring, blob);
+  }
+
+  /** Every sealed blob, as [table, column, row id, blob]. */
+  private sealedBlobs(): [string, string, string | number, Uint8Array][] {
+    const out: [string, string, string | number, Uint8Array][] = [];
+    for (const [table, key, cols] of [["games", "game_id", ["secret", "finalize"]], ["agents", "id", ["secret"]]] as const) {
+      for (const col of cols) {
+        for (const r of this.db.prepare(`SELECT ${key} AS k, ${col} AS b FROM ${table} WHERE ${col} IS NOT NULL`).all() as { k: string | number; b: Uint8Array }[]) out.push([table, col, r.k, r.b]);
+      }
+    }
+    return out;
+  }
+
+  /** How many sealed blobs use each key version (key_version audit, F01-D06). */
+  keyVersions(): Record<string, number> {
+    const counts: Record<string, number> = {};
+    for (const [, , , b] of this.sealedBlobs()) counts[blobVersion(b)] = (counts[blobVersion(b)] ?? 0) + 1;
+    return counts;
+  }
+
+  /** Re-seal every blob not on the current key version; all or nothing. Returns how many changed. */
+  reseal(): number {
+    if (!this.ring) throw new Error("store has no encryption key");
+    const todo = this.sealedBlobs().filter(([, , , b]) => blobVersion(b) !== this.ring!.current);
+    this.db.exec("BEGIN");
+    try {
+      for (const [table, col, k, b] of todo) {
+        this.db.prepare(`UPDATE ${table} SET ${col} = ? WHERE ${table === "games" ? "game_id" : "id"} = ?`).run(this.seal(this.open(b)), k);
+      }
+      this.db.exec("COMMIT");
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+    return todo.length;
   }
 
   startedUsers() {

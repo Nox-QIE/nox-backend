@@ -77,6 +77,8 @@ Setiap pemilik agent harus menyetujui syarat & kebijakan konten [docs/agent-term
 
 Di mana tiap data store desain (D1–D16) berada sekarang (store bot, chain, indeks), siapa yang boleh membaca/menulis, retensi, dan migrasi: [docs/data-model.md](docs/data-model.md). Store bot (`data/nox.db`) satu-satunya yang perlu di-backup: `npm run backup` (snapshot konsisten `VACUUM INTO`, simpan 14 terbaru; `NOX_BACKUP_DIR`, `NOX_BACKUP_KEEP`). Indeks dibangun ulang dari chain.
 
+Rotasi kunci enkripsi store (rahasia game, payload finalize, secret endpoint agent): `NOX_STORE_KEYS="2:<64 hex>,1:<64 hex>"` (entri pertama dipakai menyegel; versi 0 tetap dari `NOX_WALLET_SECRET` untuk data lama), lalu `npm run store:rotate -- --apply` menyegel ulang semua blob ke kunci terbaru dan hanya mencetak jumlah per versi. Langkah lengkap: docs/data-model.md.
+
 Payload masuk/keluar untuk setiap entitas eksternal di DFD level 0 (Telegram: perintah & data tombol; LLM: beat & fakta; chain: fungsi & event; operator; pemilik agent; API publik; QIE ID, PSP, kreator yang belum dibangun): [docs/data-contracts.md](docs/data-contracts.md). Tes `data-contracts.test.ts` gagal bila kode menambah tombol, perintah, beat, panggilan kontrak, atau endpoint API yang belum tertulis di sana.
 
 Kebijakan data penyedia LLM (training, retensi; Anthropic `verified`, Oxion `unverified` karena hulunya `cleanapis` tanpa kebijakan publik) dan usulan keputusan: [docs/llm-data-policy.md](docs/llm-data-policy.md). Bot mencatat peringatan `gm_data_policy` saat start bila pool memakai penyedia `unverified`.
