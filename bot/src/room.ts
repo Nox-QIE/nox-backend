@@ -16,6 +16,7 @@ import { ACTION_CODE, actionHash, commitRoles, configHash, randomBytes32, result
 import type { Hex } from "viem";
 import { noLedger, type GameLedger, type LedgerNightReveal } from "./chain/ledger.js";
 import { FREE_MAX_PLAYERS } from "./chain/passes.js";
+import { gmRef, scenarioRef } from "./content.js";
 import { esc, roleName, T, type Lang } from "./i18n.js";
 import type { AgentRecord, Persona } from "./agents.js";
 import { safeName } from "./names.js";
@@ -271,7 +272,16 @@ export class GameRoom {
     this.gameId = gameId;
     // Persist before anything goes on-chain: without the salts the game could never be revealed.
     this.deps.store?.saveGame(gameId, this.chatId, this.lang, { roles: this.roleReveals(), nights: [] });
-    const config = { players: this.assignments.length, timings: this.deps.timings, revealOnDeath: true, lang: this.lang, scenario: this.scenario?.key ?? null };
+    // The committed config names the exact content: Game Master (Nox, theme@version, agent) and scenario@version.
+    const agent = this.agentId !== null ? this.lobbyAgents().find((a) => a.id === this.agentId) : undefined;
+    const config = {
+      players: this.assignments.length,
+      timings: this.deps.timings,
+      revealOnDeath: true,
+      lang: this.lang,
+      gm: gmRef(agent),
+      scenario: this.scenario ? scenarioRef(this.scenario) : null,
+    };
     this.ledger.startGame(gameId, configHash(config), this.assignments.map((a) => Number(a.id)), committed.root);
   }
 

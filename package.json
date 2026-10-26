@@ -16,7 +16,8 @@
     "report": "node --env-file=.env --import tsx bot/scripts/report.ts",
     "backup": "node --env-file=.env --import tsx bot/scripts/backup.ts",
     "ops:report": "node --env-file=.env --import tsx bot/scripts/ops-report.ts",
-    "reconcile:txs": "node --env-file=.env --import tsx bot/scripts/reconcile-txs.ts"
+    "reconcile:txs": "node --env-file=.env --import tsx bot/scripts/reconcile-txs.ts",
+    "content:lock": "node --import tsx bot/scripts/content-lock.ts"
   },
   "devDependencies": {
     "typescript": "5.9",

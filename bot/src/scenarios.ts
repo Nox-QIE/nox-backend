@@ -22,6 +22,10 @@ export interface ScenarioText {
 
 export interface Scenario {
   key: string;
+  /** Goes up whenever the scenario's text changes (content.lock.json enforces it). */
+  version: number;
+  /** When the warning signs and report channels were last checked against official sources. */
+  checkedAt: string;
   /** Words accepted after /newgame. */
   keywords: string[];
   text: Record<Lang, ScenarioText>;
@@ -32,6 +36,8 @@ const EN_ROLES: Record<Role, string> = { werewolf: "🕵️ Scammer", seer: "�
 
 export const TASK_SCAM: Scenario = {
   key: "task-scam",
+  version: 1,
+  checkedAt: "2026-10-25",
   keywords: ["scamshield", "antipenipuan", "tipu", "scam"],
   text: {
     id: {

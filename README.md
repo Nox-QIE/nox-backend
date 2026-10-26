@@ -93,3 +93,7 @@ Saat diskusi sepi, Game Master melempar satu pertanyaan terbuka di tengah waktu 
 ## Uji di testnet
 
 `npm run sim:game` memainkan satu game 5 pemain lewat GameRoom + ViemLedger asli di chain `.env` (tanpa Telegram) dan mencetak status on-chain, credits per pemain, dan gas per langkah. `npm run sim:game -- --scamshield` memainkan mode Scam Shield; bila grup menang, lencana Scam Spotter diberikan di NoxBadges (`NOX_BADGES_ADDRESS`) dan jumlahnya per pemain dicetak.
+
+## Konten berversi
+
+Tema dan skenario punya `version`; hash isinya (teks, termasuk hasil render kalimat skenario) tercatat di `bot/content.lock.json`. Config yang di-commit on-chain saat `createGame` menyebut Game Master (`nox`, `theme:horor@1` + hash, atau `agent:<id>` + hash persona) dan skenario (`scenario:task-scam@1` + hash), jadi tiap game bisa ditelusuri ke konten persisnya. Mengubah teks tanpa menaikkan versi membuat tes gagal; setelah menaikkan versi jalankan `npm run content:lock`.

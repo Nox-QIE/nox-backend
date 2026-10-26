@@ -1,0 +1,18 @@
+{
+  "theme:horor": {
+    "version": 1,
+    "hash": "0x7dcf778af68d8d97d3938fff7654de772228d5048eca86b0a8a19d58cec19736"
+  },
+  "theme:fantasi": {
+    "version": 1,
+    "hash": "0xb3f2965942ee23db2618299f59f7c2b007efce1d934d34a50d8e1b8cbd8d913e"
+  },
+  "theme:kantor": {
+    "version": 1,
+    "hash": "0x523a7be9ef626f9149d51ad2c9a563c00a7f8f189c4b0f07fdf2e0e82fa06be9"
+  },
+  "scenario:task-scam": {
+    "version": 1,
+    "hash": "0x46ed22e2338a6d83538e73d7a1abc5d263c60c01fe05f8f1167400a896925667"
+  }
+}
