@@ -31,7 +31,7 @@ Button callback data, at most 64 bytes as Telegram requires. `<room>` is the lob
 | `g:<booking>` | anyone in the booked group, at the booked time | open a paid Game Night lobby as its host (first 32 hex digits of the booking id) |
 
 Text messages:
-- **Group**: counted only, to see whether discussion has gone quiet (discussion nudge). Never stored or read further.
+- **Group**: counted only, to see whether discussion has gone quiet (discussion nudge). The text is never stored or read further. At game end the bot keeps the number of messages in each discussion and the nudges sent (`finished_games.discussion`, `.nudges`), and nothing else.
 - **Private, from a living werewolf at night**: forwarded to the other living werewolves (wolf chat). Never stored.
 
 **Out.** Messages are sent with `parse_mode: HTML`, with inline keyboards built from the callback formats above. Every name and every piece of user text is HTML-escaped.

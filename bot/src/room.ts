@@ -84,6 +84,9 @@ export class GameRoom {
   private cancelTimer: (() => void) | null = null;
   private cancelNudge: (() => void) | null = null;
   private discussionMessages = 0;
+  /** Messages seen in each discussion and nudges sent: counts only, never the text (F07-D06). */
+  private discussionLog: number[] = [];
+  private nudgesSent = 0;
   private phaseStep: "night" | "discussion" | "vote" | null = null;
   private queue: Promise<unknown> = Promise.resolve();
   private readonly t;
@@ -405,12 +408,14 @@ export class GameRoom {
     // Quiet = fewer messages than living players by halfway.
     if (mode === "quiet" && this.discussionMessages >= alive) return;
     await this.deps.messenger.sendGroup(this.chatId, await this.narrator.nudge!(publicView(this.state, this.events)));
+    this.nudgesSent++;
   }
 
   private async openVote() {
     this.cancelNudge?.();
     this.cancelNudge = null;
     if (this.phaseStep !== "discussion") return;
+    this.discussionLog.push(this.discussionMessages);
     this.phaseStep = "vote";
     const s = this.state!;
     const alive = s.seats.filter((id) => s.players[id]!.alive);
@@ -479,6 +484,9 @@ export class GameRoom {
       // Scam Shield games are counted (never named) in sponsor reports (F10-D04).
       scenario: this.scenario ? `${this.scenario.key}@${this.scenario.version}` : null,
       winner: ended.winner,
+      // Without privacy mode off the bot sees no group messages, so there is nothing to count.
+      discussion: this.deps.canCountMessages ? this.discussionLog : null,
+      nudges: this.nudgesSent,
     });
     let over = await this.narrator.gameOver(ended.winner, roster);
     if (this.gameId && this.deps.webUrl) over += `\n\n${this.t.verifyLink(`${this.deps.webUrl.replace(/\/+$/, "")}/game/?id=${this.gameId}`)}`;

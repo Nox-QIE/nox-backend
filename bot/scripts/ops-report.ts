@@ -1,6 +1,6 @@
 /**
  * Daily operations report (APP-08): games, players, AI cost, gas, failures, new wallets and the gas
- * given to them, and Scam Shield practice per day, plus the latest operator balance. Reads the bot store only; needs no keys.
+ * given to them, and Scam Shield practice per day, discussion activity (counts only), plus the latest operator balance. Reads the bot store only; needs no keys.
  *   npm run ops:report            (last 7 days)
  *   npm run ops:report -- 30
  */
@@ -82,6 +82,15 @@ if (process.argv[1]?.endsWith("ops-report.ts")) {
     );
   }
   if (rows.some((r) => r.unpriced)) console.log("* some games used a model without a known price (NOX_GM_PRICE_PER_M)");
+  // Discussion activity (F07-D06): counts only, and only where the bot could see group messages.
+  const d = store.discussionStats(to - n * 86_400_000, to);
+  if (d.games) {
+    console.log(
+      d.countedGames
+        ? `Discussion: ${(d.messages / Math.max(d.discussions, 1)).toFixed(1)} messages per discussion over ${d.countedGames} of ${d.games} games, ${d.quietDiscussions} silent discussions, ${d.nudges} nudges`
+        : `Discussion: not counted (Telegram privacy mode is on), ${d.nudges} nudges`,
+    );
+  }
   const bal = store.operatorBalances(to - n * 86_400_000).at(-1);
   if (bal) console.log(`Operator balance: ${qie(bal.wei)} QIE at ${new Date(bal.at).toISOString()}`);
   store.close();

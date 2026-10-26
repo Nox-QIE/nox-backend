@@ -4,11 +4,12 @@ import { LlmNarrator } from "../src/gm/llm-narrator.js";
 import type { GmCompletion, GmModel } from "../src/gm/model.js";
 import { TemplateNarrator } from "../src/narrator.js";
 import { Registry } from "../src/registry.js";
+import { SqliteStore } from "../src/store.js";
 import { FakeMessenger, FakeScheduler } from "./fakes.js";
 
 const USERS = [11, 22, 33, 44, 55];
 
-async function toDiscussion(opts: { nudge?: "quiet" | "always"; canCountMessages?: boolean }) {
+async function toDiscussion(opts: { nudge?: "quiet" | "always"; canCountMessages?: boolean; store?: SqliteStore }) {
   const messenger = new FakeMessenger();
   const scheduler = new FakeScheduler();
   const registry = new Registry({
@@ -30,7 +31,7 @@ async function toDiscussion(opts: { nudge?: "quiet" | "always"; canCountMessages
   await room.nightAction(role("seer")[0]!, 1, String(role("werewolf")[0]));
   await room.nightAction(role("doctor")[0]!, 1, String(role("doctor")[0])); // → discussion
   const nudges = () => messenger.group().filter((m) => m.startsWith("🎙"));
-  return { room, scheduler, nudges };
+  return { room, scheduler, nudges, role };
 }
 
 describe("GM nudge for a quiet discussion (F07-S02)", () => {
@@ -82,5 +83,24 @@ describe("GM nudge for a quiet discussion (F07-S02)", () => {
     expect(loadConfig({ BOT_TOKEN: "1:x" }).nudge).toBe("quiet");
     expect(loadConfig({ BOT_TOKEN: "1:x", NOX_DISCUSSION_NUDGE: "off" }).nudge).toBe("off");
     expect(() => loadConfig({ BOT_TOKEN: "1:x", NOX_DISCUSSION_NUDGE: "loud" })).toThrow();
+  });
+
+  it("keeps only counts of the discussion: messages per discussion and nudges (F07-D06)", async () => {
+    for (const canCountMessages of [true, false]) {
+      const store = new SqliteStore(":memory:");
+      const { room, scheduler, role } = await toDiscussion({ nudge: "always", canCountMessages, store });
+      room.noteGroupMessage();
+      room.noteGroupMessage();
+      await scheduler.advance(500); // nudge
+      await scheduler.advance(500); // vote opens
+      const wolf = role("werewolf")[0]!;
+      for (const u of USERS.filter((u) => room.isAlive(u))) await room.vote(u, 1, String(wolf));
+      expect(room.status).toBe("ended");
+      expect(store.discussionStats(0, Date.now() + 1)).toEqual(
+        canCountMessages
+          ? { games: 1, countedGames: 1, discussions: 1, messages: 2, quietDiscussions: 0, nudges: 1 }
+          : { games: 1, countedGames: 0, discussions: 0, messages: 0, quietDiscussions: 0, nudges: 1 },
+      );
+    }
   });
 });
