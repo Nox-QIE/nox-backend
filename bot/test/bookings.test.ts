@@ -1,6 +1,6 @@
 import type { Abi } from "viem";
 import { describe, expect, it } from "vitest";
-import { checkPayment, NATIVE, newBookingId, paymentInstructions, type Booking } from "../src/bookings.js";
+import { checkPayment, NATIVE, newBookingId, paymentInstructions, receiptHash, type Booking } from "../src/bookings.js";
 import { NoxPaymentsAbi } from "../src/chain/contracts.js";
 import { EventIndexer, EventStore } from "../src/chain/indexer.js";
 import { SqliteStore } from "../src/store.js";
@@ -20,6 +20,8 @@ const booking = (over: Partial<Booking> = {}): Booking => ({
   token: NATIVE,
   price: 5n * e18,
   decimals: 18,
+  fiat: null,
+  receiptHash: null,
   status: "quoted",
   paidTx: null,
   note: null,
@@ -73,5 +75,22 @@ describe("Game Night bookings (F04)", () => {
     expect(usdc).toContain("Price: 200 0x00000000000000000000000000000000000000c5");
     expect(usdc).toContain("First approve 200000000");
     expect(usdc).toContain("value = 0 wei");
+  });
+
+  it("quotes rupiah by invoice and binds the receipt hash to its booking (F04-S03, F04-D04)", () => {
+    const b = booking({ fiat: { currency: "IDR", amount: 1_500_000 }, price: 0n, decimals: 0 });
+    const text = paymentInstructions(b, PAYMENTS, "id");
+    expect(text).toContain("Harga: Rp 1.500.000");
+    expect(text).toContain(b.id);
+    expect(text).not.toContain("payGameNight");
+    const receipt = new TextEncoder().encode("bukti transfer BCA 1.500.000");
+    const h = receiptHash(b.id, receipt);
+    expect(h).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(receiptHash(b.id, receipt)).toBe(h);
+    expect(receiptHash(newBookingId(), receipt)).not.toBe(h); // one receipt cannot pay two bookings
+    const store = new SqliteStore(":memory:");
+    store.addBooking(b);
+    store.updateBooking(b.id, { status: "paid", paidTx: "0x02", receiptHash: h });
+    expect(store.getBooking(b.id)).toMatchObject({ fiat: { currency: "IDR", amount: 1_500_000 }, receiptHash: h, status: "paid" });
   });
 });

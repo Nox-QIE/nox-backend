@@ -5,12 +5,15 @@
  * bot announces the night in the group and opens it at the booked time (src/gamenight.ts); `sync`
  * marks it played when a game finished in that group around that time.
  *   npm run gamenight -- quote <chat-id|-> <start, e.g. 2026-11-07T19:00+07:00> <price> "<client>"
- *       [--token 0x… --decimals 6] [--agent <id>] [--theme horor] [--lang id|en] [--contact "@handle"]
+ *       [--token 0x… --decimals 6 | --idr] [--agent <id>] [--theme horor] [--lang id|en] [--contact "@handle"]
+ *   npm run gamenight -- paid-idr <booking> <receipt-file> [--send]   (rupiah invoice paid: receipt hash on chain, operator key)
  *   npm run gamenight -- list | show <booking> | sync | set-chat <booking> <chat-id> | cancel <booking> "<reason>" | forget-contact <booking>
  *   npm run gamenight -- theme <client-theme.json> | themes      (client themes, F04-S05: quote with --theme client:<key>)
  */
 import { parseUnits, type Address } from "viem";
-import { checkPayment, NATIVE, newBookingId, paymentInstructions, type Booking } from "../src/bookings.js";
+import { checkPayment, NATIVE, newBookingId, paymentInstructions, receiptHash, type Booking } from "../src/bookings.js";
+import { operatorFrom, recordFiatGameNightOnChain } from "../src/chain/operator.js";
+import { loadChainConfig } from "../src/config.js";
 import { EventStore } from "../src/chain/indexer.js";
 import { AGENT_TERMS, isAddress } from "../src/agents.js";
 import { SqliteStore } from "../src/store.js";
@@ -47,12 +50,16 @@ switch (cmd) {
     if (chatId !== null && !Number.isInteger(chatId)) throw new Error("chat id must be a whole number (or - when not known yet)");
     const startsAt = Date.parse(b);
     if (!Number.isFinite(startsAt) || !/[zZ]|[+-]\d{2}:?\d{2}$/.test(b)) throw new Error("start must be an ISO time with a time zone, e.g. 2026-11-07T19:00+07:00");
+    // --idr: a rupiah price, invoiced by hand (F04-S03); otherwise QIE or a token, paid on chain.
+    const idr = argv.includes("--idr");
+    if (idr && flag("token")) throw new Error("--idr and --token exclude each other");
     const token = (flag("token") ?? NATIVE) as Address;
     if (!isAddress(token)) throw new Error("--token must be a token address");
-    const decimals = Number(flag("decimals") ?? (token === NATIVE ? 18 : NaN));
+    const decimals = idr ? 0 : Number(flag("decimals") ?? (token === NATIVE ? 18 : NaN));
     if (!Number.isInteger(decimals)) throw new Error("--decimals is required for a token (QUSDC: 6)");
-    const price = parseUnits(c, decimals);
-    if (price <= 0n) throw new Error("price must be above 0");
+    if (idr && !/^\d+$/.test(c)) throw new Error("a rupiah price is a whole number, e.g. 1500000");
+    const price = idr ? 0n : parseUnits(c, decimals);
+    if (!idr && price <= 0n) throw new Error("price must be above 0");
     const theme = flag("theme") ?? null;
     const own = clientThemeKey(theme);
     if (own !== null) {
@@ -87,6 +94,8 @@ switch (cmd) {
       token,
       price,
       decimals,
+      fiat: idr ? { currency: "IDR", amount: Number(c) } : null,
+      receiptHash: null,
       status: "quoted",
       paidTx: null,
       note: null,
@@ -94,7 +103,7 @@ switch (cmd) {
     };
     store.addBooking(booking);
     console.log(`Booking ${booking.id} quoted.\n`);
-    if (payments) console.log(paymentInstructions(booking, payments, lang));
+    if (payments || idr) console.log(paymentInstructions(booking, payments ?? NATIVE, lang));
     else console.log("Set NOX_PAYMENTS_ADDRESS to print the payment instructions for the client.");
     break;
   }
@@ -103,14 +112,14 @@ switch (cmd) {
     break;
   case "show": {
     const g = find(a);
-    console.log(`${line(g)}\n  id ${g.id}\n  price ${g.price} (${g.decimals} decimals) token ${g.token}${g.contact ? `\n  contact ${g.contact}` : ""}${g.paidTx ? `\n  paid in ${g.paidTx}` : ""}${store.bookingNotices(g.id).length ? `\n  notices sent: ${store.bookingNotices(g.id).join(", ")}` : ""}${g.note ? `\n  note: ${g.note}` : ""}`);
-    if (g.status === "quoted" && payments) console.log(`\n${paymentInstructions(g, payments, g.lang)}`);
+    console.log(`${line(g)}\n  id ${g.id}\n  price ${g.fiat ? `${g.fiat.amount} ${g.fiat.currency}` : `${g.price} (${g.decimals} decimals) token ${g.token}`}${g.receiptHash ? `\n  receipt hash ${g.receiptHash}` : ""}${g.contact ? `\n  contact ${g.contact}` : ""}${g.paidTx ? `\n  paid in ${g.paidTx}` : ""}${store.bookingNotices(g.id).length ? `\n  notices sent: ${store.bookingNotices(g.id).join(", ")}` : ""}${g.note ? `\n  note: ${g.note}` : ""}`);
+    if (g.status === "quoted" && (payments || g.fiat)) console.log(`\n${paymentInstructions(g, payments ?? NATIVE, g.lang)}`);
     break;
   }
   case "sync": {
     // Quoted bookings become paid once their GameNightPaid event matches the quote.
     const index = new EventStore(process.env.NOX_INDEX_DB_PATH || "data/index.db");
-    for (const g of store.listBookings().filter((x) => x.status === "quoted")) {
+    for (const g of store.listBookings().filter((x) => x.status === "quoted" && !x.fiat)) {
       const p = index.gameNightPayment(g.id);
       if (!p) continue;
       const ok = checkPayment(g, p);
@@ -154,6 +163,25 @@ switch (cmd) {
   case "themes":
     for (const t of store.listClientThemes()) console.log(`client:${t.key}  v${t.version}  ${t.client}  [${Object.keys(t.text).join(",")}]`);
     break;
+  case "paid-idr": {
+    // The transfer arrived: hash the receipt (it stays here) and record it with recordFiatGameNight.
+    const g = find(a);
+    if (!g.fiat) throw new Error(`${g.id} is not a rupiah booking`);
+    if (g.status !== "quoted") throw new Error(`${g.id} is ${g.status}`);
+    if (!b) throw new Error("usage: paid-idr <booking> <receipt-file> [--send]");
+    const hash = receiptHash(g.id, readFileSync(b));
+    console.log(`Receipt hash ${hash}`);
+    if (!argv.includes("--send")) {
+      console.log(`Dry run. With --send the operator records recordFiatGameNight(${g.id}, ${g.chainAgentId}, ${hash}) on chain.`);
+      break;
+    }
+    const cfg = loadChainConfig();
+    if (!cfg.paymentsAddress) throw new Error("set NOX_PAYMENTS_ADDRESS");
+    const tx = await recordFiatGameNightOnChain(operatorFrom(cfg), cfg.paymentsAddress, g.id, g.chainAgentId, hash);
+    store.updateBooking(g.id, { status: "paid", paidTx: tx, receiptHash: hash });
+    console.log(`${line({ ...g, status: "paid" })}  (tx ${tx})`);
+    break;
+  }
   case "set-chat": {
     const g = find(a);
     if (!b || !Number.isInteger(Number(b))) throw new Error("usage: set-chat <booking> <telegram-chat-id>");
@@ -168,6 +196,6 @@ switch (cmd) {
     break;
   }
   default:
-    console.log("commands: quote | list | show <booking> | sync | set-chat <booking> <chat-id> | cancel <booking> <reason> | forget-contact <booking> | theme <file.json> | themes");
+    console.log("commands: quote | list | show <booking> | sync | set-chat <booking> <chat-id> | cancel <booking> <reason> | forget-contact <booking> | theme <file.json> | themes | paid-idr <booking> <receipt> [--send]");
 }
 store.close();

@@ -22,6 +22,8 @@ const booking = (over: Partial<Booking> = {}): Booking => ({
   token: NATIVE,
   price: 10n ** 18n,
   decimals: 18,
+  fiat: null,
+  receiptHash: null,
   status: "paid",
   paidTx: "0x01",
   note: null,

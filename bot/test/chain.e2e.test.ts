@@ -15,7 +15,7 @@ import {
   NoxPaymentsBytecode,
 } from "../src/chain/contracts.js";
 import { EventIndexer, EventStore, reconcileCredits, reconcilePayments, type IndexerClient } from "../src/chain/indexer.js";
-import { operatorFrom, registerAgentOnChain } from "../src/chain/operator.js";
+import { operatorFrom, recordFiatGameNightOnChain, registerAgentOnChain } from "../src/chain/operator.js";
 import { PassReader, type PassClient } from "../src/chain/passes.js";
 import { settleMonth } from "../src/chain/settle.js";
 import { gasLimitFor, rpcTransport, ViemLedger, type PlayerReward, type TxRecord } from "../src/chain/viem-ledger.js";
@@ -336,6 +336,12 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
       hash: await hostWallet.writeContract({ address: payments, abi: NoxPaymentsAbi, functionName: "payGameNight", args: [("0x" + "b0".repeat(32)) as Hex, chainAgentId, NATIVE, 2n * 10n ** 18n], value: 2n * 10n ** 18n }),
     });
 
+    // A rupiah-invoiced night: only the hash of its receipt goes on chain (F04-D04).
+    const fiatBooking = ("0x" + "f1".repeat(32)) as Hex;
+    const receipt = keccak256(toHex("receipt"));
+    await recordFiatGameNightOnChain(op, payments, fiatBooking, Number(chainAgentId), receipt);
+    await expect(recordFiatGameNightOnChain(op, payments, fiatBooking, Number(chainAgentId), receipt)).rejects.toThrow();
+
     // Revenue ledger from the events (F18-D05), reconciled with the contract at the indexed block.
     const index = new EventStore(":memory:");
     await new EventIndexer({
@@ -345,6 +351,7 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
       fromBlock: 0n,
       confirmations: 0n,
     }).syncOnce();
+    expect(index.fiatGameNightRecord(fiatBooking)).toMatchObject({ agentId: Number(chainAgentId), receiptHash: receipt });
     const ledger = index.paymentLedger();
     expect(ledger.agents).toEqual([{ agentId: Number(chainAgentId), owner, token: NATIVE, gameNights: 6n * 10n ** 17n, pool: 9n * 10n ** 17n, total: 15n * 10n ** 17n }]);
     expect(ledger.treasury).toEqual([{ token: NATIVE, passes: 4n * 10n ** 18n, gameNights: 14n * 10n ** 17n, pool: 9n * 10n ** 17n, withdrawn: 0n, balance: 45n * 10n ** 17n }]);

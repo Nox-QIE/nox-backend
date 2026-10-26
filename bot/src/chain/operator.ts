@@ -94,3 +94,15 @@ export async function allocateAgentPool(
   });
   return write(op, request);
 }
+
+/** Records a rupiah-paid Game Night on chain (F04-D04): the booking id and the hash of its receipt. */
+export async function recordFiatGameNightOnChain(op: Operator, payments: Address, bookingId: Hex, chainAgentId: number, receiptHash: Hex): Promise<Hex> {
+  const { request } = await op.publicClient.simulateContract({
+    account: op.account,
+    address: payments,
+    abi: NoxPaymentsAbi,
+    functionName: "recordFiatGameNight",
+    args: [bookingId, BigInt(chainAgentId), receiptHash],
+  });
+  return write(op, request);
+}
