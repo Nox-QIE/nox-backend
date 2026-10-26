@@ -43,6 +43,9 @@ let anvil: ChildProcess;
 let gameAddress: Address;
 let creditsAddress: Address;
 const publicClient = createPublicClient({ chain, transport: http(RPC), pollingInterval: 50 });
+// The indexer must see the newest block right after a receipt; the shared client caches the block
+// number for its polling interval, which made indexer tests flaky on fast CI runners.
+const indexClient = createPublicClient({ chain, transport: http(RPC), cacheTime: 0 }) as unknown as IndexerClient;
 
 describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
   beforeAll(async () => {
@@ -329,7 +332,7 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     // Revenue ledger from the events (F18-D05), reconciled with the contract at the indexed block.
     const index = new EventStore(":memory:");
     await new EventIndexer({
-      client: publicClient as unknown as IndexerClient,
+      client: indexClient,
       store: index,
       contracts: [{ name: "NoxPayments", address: payments, abi: NoxPaymentsAbi as Abi }],
       fromBlock: 0n,
@@ -537,7 +540,7 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
   it("indexes every game event and its credits match NoxCredits.balanceOf for each player", async () => {
     const store = new EventStore(":memory:");
     const indexer = new EventIndexer({
-      client: publicClient as unknown as IndexerClient,
+      client: indexClient,
       store,
       contracts: [
         { name: "NoxGame", address: gameAddress, abi: NoxGameAbi as Abi },
