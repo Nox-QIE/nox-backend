@@ -390,6 +390,11 @@ export class EventStore {
     return BigInt(r?.n ?? 0);
   }
 
+  /** Events emitted by one transaction (for reconciling the bot's tx ledger with the chain). */
+  eventsOfTx(hash: Hex): string[] {
+    return this.rows("SELECT event FROM chain_events WHERE tx_hash = ? ORDER BY log_index", hash.toLowerCase()).map((r) => r.event as string);
+  }
+
   /** Highest block the index has fully scanned (0 before the first sync). */
   indexedBlock(): number {
     return Number(this.rows("SELECT COALESCE(MAX(block), 0) AS n FROM chain_checkpoints")[0]?.n ?? 0);
