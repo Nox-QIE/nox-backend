@@ -137,8 +137,12 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
 
     const balance = (u: number) =>
       publicClient.readContract({ address: creditsAddress, abi: NoxCreditsAbi, functionName: "balanceOf", args: [wallets.address(u)] });
-    expect(await balance(wolf!)).toBe(10n);
-    for (const u of users.filter((u) => u !== wolf)) expect(await balance(u)).toBe(30n);
+    // Credits formula (ADR-005): 10 to play, 20 for the winning village, +5 seer hit, +2 per vote for the wolf.
+    expect(await balance(wolf!)).toBe(10n); // voted for itself: wolves get no vote bonus
+    expect(await balance(seer!)).toBe(37n); // inspected the wolf + voted it
+    expect(await balance(doctor!)).toBe(32n); // protected itself, not the wolf's pick: vote only
+    expect(await balance(victim)).toBe(30n); // killed at night, never voted
+    for (const u of role("villager").filter((u) => u !== victim)) expect(await balance(u)).toBe(32n);
 
     // Every player sent their own transactions (join + votes/commits), funded by the gas drip.
     for (const u of users) expect(await publicClient.getTransactionCount({ address: wallets.address(u) })).toBeGreaterThan(0);
@@ -323,7 +327,8 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     expect(logs.filter((l) => l.event === "chain_error")).toEqual([]);
     expect(await ledger.statusOf(gameId)).toBe(2); // Running: create, 5 joins and commitRoles all landed
     expect(gasLimitFor("createGame", 22088n)).toBe(110_000n);
-    expect(gasLimitFor("revealAndFinalize", 1_500_000n)).toBe(1_875_000n);
+    expect(gasLimitFor("revealAndFinalize", 1_500_000n)).toBe(2_400_000n); // floor
+    expect(gasLimitFor("revealAndFinalize", 2_000_000n)).toBe(2_500_000n); // estimate + 25%
   }, 60_000);
 
   it("retries through a flaky node without creating twice or dripping twice", async () => {
