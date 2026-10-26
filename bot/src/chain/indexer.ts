@@ -223,10 +223,12 @@ export class EventStore {
       `SELECT j.game_id, j.block, j.ts, CAST(json_extract(r.args, '$.role') AS INTEGER) AS role,
               CAST(json_extract(f.args, '$.winner') AS INTEGER) AS winner,
               (SELECT COUNT(*) FROM chain_events x WHERE x.game_id = j.game_id AND x.event = 'GameCancelled') AS cancelled,
-              (SELECT COUNT(*) FROM chain_events d WHERE d.game_id = j.game_id AND d.event = 'GameDisputed') AS disputed
+              (SELECT COUNT(*) FROM chain_events d WHERE d.game_id = j.game_id AND d.event = 'GameDisputed') AS disputed,
+              g.args AS reward
        FROM chain_events j
        LEFT JOIN chain_events r ON r.game_id = j.game_id AND r.event = 'RoleRevealed' AND r.account = j.account
        LEFT JOIN chain_events f ON f.game_id = j.game_id AND f.event = 'GameFinalized'
+       LEFT JOIN chain_events g ON g.game_id = j.game_id AND g.event = 'RewardGranted' AND g.account = j.account
        WHERE j.event = 'PlayerJoined' AND j.account = ?
        ORDER BY j.block DESC`,
       a,
@@ -240,6 +242,8 @@ export class EventStore {
         role: role === null ? null : ROLE_NAMES[role] ?? null,
         status: winner !== null ? "finalized" : Number(r.cancelled) ? "cancelled" : Number(r.disputed) ? "disputed" : "running",
         won: role !== null && winner !== null ? (role === 2 ? 2 : 1) === winner : null,
+        /** Credits breakdown from RewardGranted (ADR-005); null for games before the formula or not finalized. */
+        reward: r.reward ? rewardOf(JSON.parse(r.reward as string) as Record<string, unknown>) : null,
       };
     });
     const signed = this.rows(
@@ -269,6 +273,12 @@ export class EventStore {
 }
 
 const ROLE_NAMES: Record<number, string> = { 1: "villager", 2: "werewolf", 3: "seer", 4: "doctor" };
+
+const rewardOf = (a: Record<string, unknown>) => {
+  const n = (k: string) => Number(a[k] ?? 0);
+  const part = { base: n("base"), role: n("roleBonus"), vote: n("voteBonus"), streak: n("streakBonus") };
+  return { version: n("version"), ...part, total: part.base + part.role + part.vote + part.streak };
+};
 
 export interface GameSummary {
   gameId: Hex;

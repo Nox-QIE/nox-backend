@@ -126,7 +126,7 @@ class GameQueue {
 
 /**
  * Gas floors per NoxGame function: the most each used in the contract tests (12 players for
- * revealAndFinalize), plus margin. On 26 Oct 2026 a QIE testnet RPC answered eth_estimateGas with
+ * revealAndFinalize: about 1.65M with the ADR-005 credits formula), plus margin. On 26 Oct 2026 a QIE testnet RPC answered eth_estimateGas with
  * 22088 for createGame (the cost of calling an address with no code, as if a lagging node lacked
  * the contract); the transaction ran out of gas. Never send less than these.
  */
@@ -137,7 +137,7 @@ export const GAS_FLOOR: Record<string, bigint> = {
   commitNightAction: 90_000n,
   castVote: 90_000n,
   recordRound: 90_000n,
-  revealAndFinalize: 1_800_000n,
+  revealAndFinalize: 2_400_000n,
   cancelGame: 60_000n,
   reportDispute: 60_000n,
 };

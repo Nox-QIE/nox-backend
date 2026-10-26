@@ -100,6 +100,16 @@ describe("event indexer", () => {
     expect(store.stats().disputedGames).toBe(1);
   });
 
+  it("adds the credits breakdown from RewardGranted to a player's history", async () => {
+    const { chain, store, indexer } = setup();
+    playGame(chain, 200n);
+    chain.logs.push(game("RewardGranted", { gameId, player: ben, version: 1, base: 30, roleBonus: 5, voteBonus: 2, streakBonus: 0 }, 204n, 9));
+    chain.head = 300n;
+    await indexer.syncOnce();
+    expect(store.player(ben).history[0]!.reward).toEqual({ version: 1, base: 30, role: 5, vote: 2, streak: 0, total: 37 });
+    expect(store.player(cy).history[0]!.reward).toBeNull();
+  });
+
   it("skips logs it cannot decode", async () => {
     const { chain, store, indexer, logs } = setup();
     chain.logs.push({ address: GAME, blockNumber: 150n, transactionHash: keccak256("0x01"), logIndex: 0, topics: [keccak256(toHex("Nope()"))], data: "0x" });
