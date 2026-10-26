@@ -11,13 +11,13 @@ import { FakeMessenger, FakeScheduler } from "./fakes.js";
 
 const PAYMENTS = "0x691304FD74F9fc06003572Cc2AE9b876Bd05EE18" as Address;
 
-function fakeClient(expiry: Record<string, number>, price = 10n ** 18n) {
+function fakeClient(expiry: Record<string, number>, price = 10n ** 18n, tokenPrice = 0n) {
   const calls: string[] = [];
   const client: PassClient = {
     readContract: async ({ functionName, args }) => {
       calls.push(functionName);
       if (functionName === "passExpiry") return BigInt(expiry[String(args[0]).toLowerCase()] ?? 0);
-      if (functionName === "priceOf") return price;
+      if (functionName === "priceOf") return String(args[1]) === "0x0000000000000000000000000000000000000000" ? price : tokenPrice;
       if (functionName === "periodOf") return 30n * 86_400n;
       throw new Error(functionName);
     },
@@ -109,5 +109,16 @@ describe("/pass", () => {
     expect(id).toContain("buyPassFor("); // paying on chain stays possible
     const global = await passReply({ ledger, passes, payments: PAYMENTS, userId: 1, lang: "en", rail: "onchain" });
     expect(global).not.toContain("rupiah");
+  });
+
+  it("also offers QUSDC when NoxPayments has a QUSDC price (F14-S04)", async () => {
+    const QUSDC = "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5";
+    const priced = new PassReader({ client: fakeClient({}, 10n ** 18n, 2_500_000n).client, payments: PAYMENTS, now: () => 1_800_000_000_000 });
+    const en = await passReply({ ledger, passes: priced, payments: PAYMENTS, userId: 1, lang: "en", qusdc: QUSDC });
+    expect(en).toContain("Or pay 2.5 QUSDC per period");
+    expect(en).toContain(`approve(${PAYMENTS}, price × periods)`);
+    expect(en).toContain(`buyPassFor(0x00000000000000000000000000000000000000aa, 1, &lt;periods&gt;, ${QUSDC})`);
+    const unpriced = new PassReader({ client: fakeClient({}).client, payments: PAYMENTS, now: () => 1_800_000_000_000 });
+    expect(await passReply({ ledger, passes: unpriced, payments: PAYMENTS, userId: 1, lang: "id", qusdc: QUSDC })).not.toContain("QUSDC");
   });
 });

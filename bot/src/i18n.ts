@@ -43,6 +43,8 @@ type Dict = {
   passNeeded: string;
   passForMore: (max: number) => string;
   passStatus: (p: { wallet: string; active: boolean; until: string | null; price: string | null; periodDays: number | null; payments: string; explorer: string }) => string;
+  /** Paying the pass in QUSDC (F14-S04): approve, then buyPassFor with the token. */
+  passQusdc: (p: { wallet: string; price: string; token: string; payments: string }) => string;
   /** Rupiah rail (F14-D04): pay by invoice; the operator records the pass on chain. */
   passRupiah: (wallet: string, contact: string | null) => string;
   countrySet: (country: string, rupiah: boolean) => string;
@@ -116,6 +118,8 @@ export const T: Record<Lang, Dict> = {
           ? `Harga: ${p.price} QIE per ${p.periodDays} hari. Bayar dari wallet kamu sendiri dengan <code>buyPassFor(${p.wallet}, 1, &lt;jumlah periode&gt;, 0x0000000000000000000000000000000000000000)</code> di kontrak NoxPayments <a href="${p.explorer}">${p.payments}</a>, nilai = harga × periode. Pass langsung aktif untuk wallet game kamu.`
           : "Host Pass belum dijual.",
       ].join("\n"),
+    passQusdc: (p) =>
+      `💵 Atau bayar ${p.price} QUSDC per periode: di kontrak QUSDC <code>${p.token}</code> panggil <code>approve(${p.payments}, harga × periode)</code>, lalu <code>buyPassFor(${p.wallet}, 1, &lt;jumlah periode&gt;, ${p.token})</code> dengan nilai 0.`,
     passRupiah: (wallet, contact) =>
       `🇮🇩 Bayar dengan rupiah: minta invoice ke ${contact ? esc(contact) : "admin Nox"} dan sebutkan wallet game di atas. Setelah dana masuk, pass dicatat di blockchain QIE untuk wallet <code>${wallet}</code>. Bukan di Indonesia? Ketik /negara diikuti kode negara (mis. /negara SG).`,
     countrySet: (c, rupiah) => `Negara disimpan: ${c}. ${rupiah ? "Pass dibayar dengan rupiah lewat invoice." : "Pass dibayar dengan QIE atau QUSDC dari wallet kamu sendiri."} Cek /pass.`,
@@ -202,6 +206,8 @@ export const T: Record<Lang, Dict> = {
           ? `Price: ${p.price} QIE per ${p.periodDays} days. Pay from your own wallet with <code>buyPassFor(${p.wallet}, 1, &lt;periods&gt;, 0x0000000000000000000000000000000000000000)</code> on the NoxPayments contract <a href="${p.explorer}">${p.payments}</a>, value = price × periods. The pass goes straight to your game wallet.`
           : "Host Passes are not on sale yet.",
       ].join("\n"),
+    passQusdc: (p) =>
+      `💵 Or pay ${p.price} QUSDC per period: on the QUSDC contract <code>${p.token}</code> call <code>approve(${p.payments}, price × periods)</code>, then <code>buyPassFor(${p.wallet}, 1, &lt;periods&gt;, ${p.token})</code> with value 0.`,
     passRupiah: (wallet, contact) =>
       `🇮🇩 Pay in rupiah: ask ${contact ? esc(contact) : "a Nox admin"} for an invoice and quote the game wallet above. Once the funds arrive, the pass is recorded on the QIE blockchain for <code>${wallet}</code>. Not in Indonesia? Send /country with your country code (e.g. /country SG).`,
     countrySet: (c, rupiah) => `Country saved: ${c}. ${rupiah ? "Passes are paid in rupiah by invoice." : "Passes are paid in QIE or QUSDC from your own wallet."} See /pass.`,
