@@ -152,6 +152,12 @@ export class LlmNarrator implements Narrator {
     return this.join(await this.flavor({ kind: "gameOver", winner, roster: raw }, this.names), fact);
   }
 
+  async nudge(view: PublicView) {
+    // Every living player is off limits: the line must not point at anyone.
+    const flavor = await this.flavor({ kind: "nudge", round: view.round, alive: view.alive.length }, []);
+    return flavor ? `🎙 <i>${flavor}</i>` : this.template.nudge(view);
+  }
+
   finish(): NarratorReport {
     let cost: number | null = 0;
     for (const [model, u] of Object.entries(this.stats.byModel)) {

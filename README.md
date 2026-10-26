@@ -85,3 +85,7 @@ Di mana tiap data store desain (D1–D16) berada sekarang (store bot, chain, ind
 - Tiap game selesai mencatat pemakaian AI di `gm_games` (model, token, biaya USD, beat oleh persona / suara Nox / template).
 - Lonjakan error memicu DM ke `NOX_OPERATOR_CHAT_ID` (maks sekali per jam per jenis): ≥3 `chain_error` dalam 10 menit, ≥10 `gm_error`, ≥5 `bot_error`. Insiden tunggal (game disputed, saldo operator menipis, agent di-suspend) punya alert sendiri.
 - `npm run ops:report [hari]`: per hari game, kursi, biaya AI, porsi template, gas, tx gagal, latihan Scam Shield (selesai/dimulai), dan saldo operator terakhir.
+
+## Pancingan diskusi
+
+Saat diskusi sepi, Game Master melempar satu pertanyaan terbuka di tengah waktu diskusi (tanpa menyebut atau mengarah ke siapa pun; guard tetap berlaku, template sebagai cadangan). `NOX_DISCUSSION_NUDGE=quiet` (default) hanya bekerja bila bot bisa membaca pesan grup (BotFather → Group Privacy → Disable): pancingan muncul bila pesan masih lebih sedikit dari jumlah pemain hidup. `always` = sekali tiap diskusi, `off` = mati. Pesan grup hanya dihitung, tidak disimpan atau dibaca lebih jauh.

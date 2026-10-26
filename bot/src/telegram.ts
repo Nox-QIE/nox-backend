@@ -272,7 +272,7 @@ export async function passReply(a: { ledger: GameLedger; passes: PassReader | nu
 }
 
 /** Wire Telegram updates to the registry. Nox stays a regular bot: no Mini App / Web App buttons. */
-export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, apiUrl, timings, gm, chain, rateLimit, hostPass }: Config) {
+export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, apiUrl, timings, gm, chain, rateLimit, hostPass, nudge }: Config) {
   const bot = new Bot(botToken);
   await bot.init();
   // First middleware: refused updates never reach the game.
@@ -326,6 +326,8 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
     ...(webUrl ? { webUrl } : {}),
     onAgentGame: onAgentGame({ store, messenger, ...(operatorChatId ? { operatorChatId } : {}) }),
     onGameReport: (g) => store.recordGmGame(g),
+    // Counting a quiet discussion needs Telegram privacy mode off (BotFather → Group Privacy → Disable).
+    ...(nudge !== "off" ? { nudge, canCountMessages: bot.botInfo.can_read_all_group_messages } : {}),
     ...(hostPassCheck ? { hostPass: hostPassCheck } : {}),
   });
   await recoverGames(store, ledger, messenger, logLine);
@@ -415,7 +417,11 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
   });
 
   bot.on("message:text", async (ctx) => {
-    if (ctx.chat.type !== "private") return;
+    if (ctx.chat.type !== "private") {
+      // Only counted, never stored or read further: is the discussion going quiet? (F07-S02)
+      registry.roomOfChat(ctx.chat.id)?.noteGroupMessage();
+      return;
+    }
     registry.markStarted(ctx.from.id);
     const room = registry.roomOfUser(ctx.from.id);
     if (room) await room.wolfChat(ctx.from.id, ctx.message.text);
