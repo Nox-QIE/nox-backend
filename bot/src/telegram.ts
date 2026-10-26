@@ -13,7 +13,8 @@ import { SqliteStore, storeKey, type Store } from "./store.js";
 import { createGmModel } from "./gm/model.js";
 import { GmModelPool } from "./gm/pool.js";
 import { LlmNarrator } from "./gm/llm-narrator.js";
-import { HEALTH, suspensionReason, type Persona } from "./agents.js";
+import { HEALTH, suspensionReason, type AgentRecord, type Persona } from "./agents.js";
+import { EndpointModel } from "./gm/endpoint.js";
 import { TemplateNarrator, type Narrator, type NarratorReport, type Wording } from "./narrator.js";
 import { realScheduler, type Keyboard, type Messenger } from "./ports.js";
 import { Registry } from "./registry.js";
@@ -62,21 +63,29 @@ export const displayName = (u: { first_name: string; last_name?: string; usernam
 
 const stripTags = (html: string) => html.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 
-export function narratorFactory(gm: GmConfig): (lang: "id" | "en", persona?: Persona, wording?: Wording) => Narrator {
+export function narratorFactory(
+  gm: GmConfig,
+  /** The signing secret of an endpoint agent (F18-S10), read from the store only when a game needs it. */
+  endpointSecret?: (agentId: number) => string | null,
+): (lang: "id" | "en", persona?: Persona, wording?: Wording, agent?: AgentRecord) => Narrator {
   if (gm.mode === "template") return (lang, _persona, wording) => new TemplateNarrator(lang, wording);
   const pool = buildGmPool(gm);
   const log = (line: Record<string, unknown>) => console.log(JSON.stringify(line));
   // Each game (room) gets its own pick from the pool.
-  return (lang, persona, wording) =>
-    new LlmNarrator({
+  return (lang, persona, wording, agent) => {
+    const secret = agent?.mode === "endpoint" && agent.endpoint ? endpointSecret?.(agent.id) : null;
+    const personaModel = secret && agent?.endpoint ? new EndpointModel({ agentId: agent.id, url: agent.endpoint, secret, lang }) : undefined;
+    return new LlmNarrator({
       model: pool.forGame(),
       lang,
       timeoutMs: gm.timeoutMs,
       log,
       ...(gm.price ? { price: gm.price } : {}),
       ...(persona ? { persona } : {}),
+      ...(personaModel ? { personaModel } : {}),
       ...(wording ? { wording } : {}),
     });
+  };
 }
 
 export function buildGmPool(gm: GmConfig): GmModelPool {
@@ -224,7 +233,7 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, t
     timings,
     randomInt: (max) => randomInt(max),
     botUsername: bot.botInfo.username,
-    narratorFor: narratorFactory(gm),
+    narratorFor: narratorFactory(gm, (id) => store.agentSecret(id)),
     // Personas need an LLM; with template narration there is nothing to pick.
     ...(gm.mode === "llm" ? { agents: () => [...THEME_AGENTS, ...store.listAgents(true)] } : {}),
     ledger,
