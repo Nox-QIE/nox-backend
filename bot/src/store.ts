@@ -106,7 +106,7 @@ export interface Store {
   addBooking(b: Booking): void;
   getBooking(id: string): Booking | null;
   listBookings(): Booking[];
-  updateBooking(id: string, u: { status?: BookingStatus; paidTx?: string | null; note?: string | null; chatId?: number | null; contact?: string | null }): void;
+  updateBooking(id: string, u: { status?: BookingStatus; paidTx?: string | null; note?: string | null; chatId?: number | null; contact?: string | null; receiptHash?: string | null }): void;
   /** Group notices already sent for a booking ("24h", "1h", "open"), F04-S06. */
   bookingNotices(id: string): string[];
   addBookingNotice(id: string, notice: string): void;
@@ -265,7 +265,10 @@ export class SqliteStore implements Store {
         paid_tx TEXT,
         note TEXT,
         created_at INTEGER NOT NULL,
-        notices TEXT NOT NULL DEFAULT ''
+        notices TEXT NOT NULL DEFAULT '',
+        fiat_currency TEXT,
+        fiat_amount INTEGER,
+        receipt_hash TEXT
       );
       CREATE TABLE IF NOT EXISTS client_themes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -340,6 +343,8 @@ export class SqliteStore implements Store {
     this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS users_address ON users (address) WHERE address IS NOT NULL");
     const fgCols = new Set((this.db.prepare("PRAGMA table_info(finished_games)").all() as { name: string }[]).map((c) => c.name));
     if (!fgCols.has("chat_id")) this.db.exec("ALTER TABLE finished_games ADD COLUMN chat_id INTEGER");
+    const bkCols = new Set((this.db.prepare("PRAGMA table_info(bookings)").all() as { name: string }[]).map((c) => c.name));
+    for (const [c, type] of [["fiat_currency", "TEXT"], ["fiat_amount", "INTEGER"], ["receipt_hash", "TEXT"]]) if (!bkCols.has(c!)) this.db.exec(`ALTER TABLE bookings ADD COLUMN ${c} ${type}`);
     if (!fgCols.has("scenario")) this.db.exec("ALTER TABLE finished_games ADD COLUMN scenario TEXT");
     if (!fgCols.has("winner")) this.db.exec("ALTER TABLE finished_games ADD COLUMN winner TEXT");
   }
@@ -462,9 +467,29 @@ export class SqliteStore implements Store {
   addBooking(b: Booking) {
     this.db
       .prepare(
-        "INSERT INTO bookings (id, client, contact, chat_id, starts_at, lang, theme, agent_id, chain_agent_id, token, price, decimals, status, paid_tx, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO bookings (id, client, contact, chat_id, starts_at, lang, theme, agent_id, chain_agent_id, token, price, decimals, status, paid_tx, note, created_at, fiat_currency, fiat_amount, receipt_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
-      .run(b.id, b.client, b.contact, b.chatId, b.startsAt, b.lang, b.theme, b.agentId, b.chainAgentId, b.token, b.price.toString(), b.decimals, b.status, b.paidTx, b.note, b.createdAt);
+      .run(
+        b.id,
+        b.client,
+        b.contact,
+        b.chatId,
+        b.startsAt,
+        b.lang,
+        b.theme,
+        b.agentId,
+        b.chainAgentId,
+        b.token,
+        b.price.toString(),
+        b.decimals,
+        b.status,
+        b.paidTx,
+        b.note,
+        b.createdAt,
+        b.fiat?.currency ?? null,
+        b.fiat?.amount ?? null,
+        b.receiptHash,
+      );
   }
 
   private toBooking(r: Record<string, string | number | null>): Booking {
@@ -481,6 +506,8 @@ export class SqliteStore implements Store {
       token: r.token as Hex,
       price: BigInt(r.price as string),
       decimals: Number(r.decimals),
+      fiat: r.fiat_currency ? { currency: r.fiat_currency as "IDR", amount: Number(r.fiat_amount) } : null,
+      receiptHash: (r.receipt_hash as Hex | null) ?? null,
       status: r.status as BookingStatus,
       paidTx: (r.paid_tx as Hex | null) ?? null,
       note: (r.note as string | null) ?? null,
@@ -497,8 +524,8 @@ export class SqliteStore implements Store {
     return (this.db.prepare("SELECT * FROM bookings ORDER BY starts_at, id").all() as Record<string, string | number | null>[]).map((r) => this.toBooking(r));
   }
 
-  updateBooking(id: string, u: { status?: BookingStatus; paidTx?: string | null; note?: string | null; chatId?: number | null; contact?: string | null }) {
-    const cols: Record<string, keyof typeof u> = { status: "status", paid_tx: "paidTx", note: "note", chat_id: "chatId", contact: "contact" };
+  updateBooking(id: string, u: { status?: BookingStatus; paidTx?: string | null; note?: string | null; chatId?: number | null; contact?: string | null; receiptHash?: string | null }) {
+    const cols: Record<string, keyof typeof u> = { status: "status", paid_tx: "paidTx", note: "note", chat_id: "chatId", contact: "contact", receipt_hash: "receiptHash" };
     const set = Object.entries(cols).filter(([, k]) => u[k] !== undefined);
     if (!set.length) return;
     this.db

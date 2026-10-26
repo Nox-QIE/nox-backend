@@ -59,6 +59,8 @@ describe("client themes (F04-S05, F04-D03)", () => {
       token: NATIVE,
       price: 1n,
       decimals: 18,
+      fiat: null,
+      receiptHash: null,
       status: "paid",
       paidTx: null,
       note: null,

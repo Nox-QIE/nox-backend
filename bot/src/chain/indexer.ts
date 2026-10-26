@@ -516,6 +516,14 @@ export class EventStore {
     };
   }
 
+  /** The receipt hash recorded for a rupiah-paid Game Night (FiatGameNightRecorded), or null. */
+  fiatGameNightRecord(bookingId: Hex): { agentId: number; receiptHash: Hex; tx: Hex; block: number } | null {
+    const r = this.rows("SELECT tx_hash, block, args FROM chain_events WHERE event = 'FiatGameNightRecorded' AND lower(json_extract(args, '$.bookingId')) = ?", bookingId.toLowerCase())[0];
+    if (!r) return null;
+    const a = JSON.parse(r.args as string) as Record<string, string>;
+    return { agentId: Number(a.agentId), receiptHash: a.receiptHash as Hex, tx: r.tx_hash as Hex, block: Number(r.block) };
+  }
+
   /** How many times a badge (by its name, e.g. SCAM_SPOTTER) was awarded on chain in [fromTs, toTs). */
   badgesAwarded(badgeId: Hex, fromTs: number, toTs: number): number {
     return Number(

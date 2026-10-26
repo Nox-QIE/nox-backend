@@ -85,6 +85,7 @@ A line that fails falls back in layers: persona → Nox's own voice → template
 | `NoxGame.cancelGame` | operator | game id, reason |
 | `NoxBadges.award` | operator | badge id, game id, wallets |
 | `NoxAgentRegistry.registerAgent` | operator | owner wallet, mode, metadata hash |
+| `NoxPayments.recordFiatGameNight` | operator | booking id, agent id, receipt hash (rupiah invoice paid) |
 | `NoxPayments.allocateAgentPool` | operator | period, token, agent ids, amounts, usage root (commitment to the per-game data) |
 | gas drip (plain transfer) | operator | value to a player wallet; ledger reason `onboarding` or `top-up` |
 
@@ -131,7 +132,7 @@ See [agent-terms.md](agent-terms.md), section 3, for the full table. In short:
   - `gamenight sync` matches the `GameNightPaid` event to the quote. Token, amount (at least the quote) and agent must all match, because the contract accepts any amount. A matching payment marks the booking `paid`; a mismatch is noted, and the booking stays `quoted`.
   - Self-service booking and custom themes: **not built** (portal planned, L0-08).
   - Sponsor funds: **not built**.
-  - Rupiah payment: **not built** (E10).
+  - Rupiah payment, MVP: a manual invoice (`gamenight quote … --idr`, transfer quoting the booking code). When the transfer arrives, `gamenight paid-idr <booking> <receipt> --send` records `NoxPayments.recordFiatGameNight(bookingId, agentId, receiptHash)` with the operator key. `receiptHash = keccak256(bookingId ‖ keccak256(receipt file))`; the receipt, which holds bank details, stays with the operator. A rupiah night credits no agent share on chain. Checkout and webhook through a PSP: **not built** (E10).
 - **Out.**
   - The quote and payment instructions: contract address, the exact `payGameNight` call and its value.
   - The Game Night engagement report: Markdown and JSON from `npm run report`, the same definitions as `/v1/engagement`. It holds counts only and hides counts of 1–2.
