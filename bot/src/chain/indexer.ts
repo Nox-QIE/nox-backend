@@ -399,6 +399,19 @@ export class EventStore {
     ).map(toGameSummary);
   }
 
+  /** Players (wallets), timing and size of one indexed game, for reports. */
+  gameDetail(gameId: Hex): { players: Address[]; createdTs: number; endedTs: number | null; status: GameSummary["status"]; rounds: number; credits: number } | null {
+    const g = this.game(gameId);
+    if (!g) return null;
+    const id = gameId.toLowerCase();
+    const players = this.rows("SELECT DISTINCT account FROM chain_events WHERE game_id = ? AND event = 'PlayerJoined'", id).map((r) => r.account as Address);
+    const rounds = Number(this.rows("SELECT COUNT(*) AS n FROM chain_events WHERE game_id = ? AND event = 'RoundRecorded'", id)[0]?.n ?? 0);
+    const credits = Number(
+      this.rows("SELECT COALESCE(SUM(CAST(json_extract(args, '$.amount') AS INTEGER)), 0) AS n FROM chain_events WHERE game_id = ? AND event = 'CreditsMinted'", id)[0]?.n ?? 0,
+    );
+    return { players, createdTs: g.ts, endedTs: g.endedTs, status: g.status, rounds, credits };
+  }
+
   /** One player's history, all from public events: joins, revealed roles, results, credits, signed txs. */
   player(account: Address) {
     const a = account.toLowerCase();

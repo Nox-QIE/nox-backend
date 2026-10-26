@@ -65,8 +65,10 @@ export interface Store {
   setAgentStatus(id: number, status: AgentRecord["status"]): void;
   setChainAgentId(id: number, chainAgentId: number): void;
   /** Every finished game (agentId null = Nox's own GM): the input for monthly agent revenue settlement. */
-  recordFinishedGame(g: { agentId: number | null; players: number; hostId: number; chainGameId: Hex | null }): void;
+  /** `chatId` (the Telegram group) feeds the Game Night engagement report; it identifies a group, not a person. */
+  recordFinishedGame(g: { agentId: number | null; players: number; hostId: number; chainGameId: Hex | null; chatId?: number }): void;
   finishedGames(fromMs: number, toMs: number): FinishedGame[];
+  finishedGamesOfChat(chatId: number, fromMs: number, toMs: number): FinishedGame[];
   agentUsage(fromMs: number, toMs: number): { agentId: number; games: number; players: number }[];
   /** Gas & transaction ledger (D14): one row per transaction the ledger sent or gave up on. */
   recordTx(tx: TxRecord): void;
@@ -192,6 +194,8 @@ export class SqliteStore implements Store {
     if (!cols.has("mode")) this.db.exec("ALTER TABLE agents ADD COLUMN mode TEXT NOT NULL DEFAULT 'persona'");
     if (!cols.has("endpoint")) this.db.exec("ALTER TABLE agents ADD COLUMN endpoint TEXT");
     if (!cols.has("secret")) this.db.exec("ALTER TABLE agents ADD COLUMN secret BLOB");
+    const fgCols = new Set((this.db.prepare("PRAGMA table_info(finished_games)").all() as { name: string }[]).map((c) => c.name));
+    if (!fgCols.has("chat_id")) this.db.exec("ALTER TABLE finished_games ADD COLUMN chat_id INTEGER");
   }
 
   close() {
@@ -320,10 +324,18 @@ export class SqliteStore implements Store {
     this.db.prepare("UPDATE agents SET chain_agent_id = ? WHERE id = ?").run(chainAgentId, id);
   }
 
-  recordFinishedGame(g: { agentId: number | null; players: number; hostId: number; chainGameId: Hex | null }) {
+  recordFinishedGame(g: { agentId: number | null; players: number; hostId: number; chainGameId: Hex | null; chatId?: number }) {
     this.db
-      .prepare("INSERT INTO finished_games (agent_id, players, host_id, chain_game_id, ended_at) VALUES (?, ?, ?, ?, ?)")
-      .run(g.agentId, g.players, g.hostId, g.chainGameId, Date.now());
+      .prepare("INSERT INTO finished_games (agent_id, players, host_id, chain_game_id, ended_at, chat_id) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(g.agentId, g.players, g.hostId, g.chainGameId, Date.now(), g.chatId ?? null);
+  }
+
+  finishedGamesOfChat(chatId: number, fromMs: number, toMs: number): FinishedGame[] {
+    return this.db
+      .prepare(
+        "SELECT id, agent_id AS agentId, players, host_id AS hostId, chain_game_id AS chainGameId, ended_at AS endedAt FROM finished_games WHERE chat_id = ? AND ended_at >= ? AND ended_at < ? ORDER BY id",
+      )
+      .all(chatId, fromMs, toMs) as unknown as FinishedGame[];
   }
 
   finishedGames(fromMs: number, toMs: number): FinishedGame[] {
