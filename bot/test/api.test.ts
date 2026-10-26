@@ -1,5 +1,4 @@
-import type { AddressInfo } from "node:net";
-import type { Server } from "node:http";
+import type { FastifyInstance } from "fastify";
 import { keccak256, toHex, type Abi } from "viem";
 import { afterEach, describe, expect, it } from "vitest";
 import { createApi } from "../src/api.js";
@@ -9,7 +8,7 @@ import { buildReport } from "../src/report.js";
 import { loginSecret, loginToken } from "../src/login.js";
 import { ava, ben, CREDITS, cy, FakeChain, GAME, game, gameId, playGame } from "./chain-fakes.js";
 
-let server: Server | undefined;
+let server: FastifyInstance | undefined;
 afterEach(() => server?.close());
 
 async function setup(opts: { ratePerMinute?: number; loginSecret?: Buffer } = {}) {
@@ -39,9 +38,8 @@ async function setup(opts: { ratePerMinute?: number; loginSecret?: Buffer } = {}
   await indexer.syncOnce();
   // Day of block 200 in the fake chain's clock, at noon.
   const now = (1_790_000_000 + 200 * 4) * 1000 + 6 * 3600 * 1000;
-  server = createApi({ store, network: "testnet", chainId: 1983, now: () => now, ...opts });
-  await new Promise<void>((r) => server!.listen(0, "127.0.0.1", r));
-  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  server = await createApi({ store, network: "testnet", chainId: 1983, now: () => now, ...opts });
+  const base = await server.listen({ port: 0, host: "127.0.0.1" });
   const get = (path: string, init?: RequestInit) => fetch(base + path, init);
   return { chain, store, indexer, get, g2, g3 };
 }
@@ -189,5 +187,22 @@ describe("public API", () => {
     const { get } = await setup();
     expect((await get("/v1/login", { method: "POST", body: "{}" })).status).toBe(405);
     expect((await get("/v1/me")).status).toBe(404);
+  });
+
+  it("describes itself in OpenAPI and keeps the HTTP details on Fastify", async () => {
+    const { get } = await setup({ loginSecret: loginSecret("ab".repeat(32))! });
+    const spec = await (await get("/v1/openapi.json")).json();
+    expect(spec.openapi).toMatch(/^3\./);
+    expect(Object.keys(spec.paths)).toEqual(
+      expect.arrayContaining(["/v1/health", "/v1/stats", "/v1/leaderboard", "/v1/games/{id}", "/v1/players/{address}", "/v1/agents/{id}", "/v1/login", "/v1/me"]),
+    );
+    expect(spec.paths["/v1/leaderboard"].get.parameters.map((x: { name: string }) => x.name).sort()).toEqual(["limit", "season"]);
+    const head = await get("/v1/stats", { method: "HEAD" });
+    expect([head.status, await head.text()]).toEqual([200, ""]);
+    const stats = await get("/v1/stats/");
+    expect(stats.status).toBe(200); // trailing slash
+    expect(stats.headers.get("x-content-type-options")).toBe("nosniff");
+    const bad = await (await get("/v1/leaderboard?limit=0")).json();
+    expect(bad.error).toMatch(/limit must be >= 1/);
   });
 });

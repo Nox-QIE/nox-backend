@@ -56,7 +56,7 @@ Definisi setiap angka (sumber event, aturan waktu UTC, privasi): [docs/metrics.m
 
 Masuk ke web tanpa password (NOX-APP-14): isi `NOX_LOGIN_SECRET` (`openssl rand -hex 32`, sama di bot dan API) dan `NOX_WEB_URL`. `/web` (`/masuk`) di chat pribadi memberi tautan `<NOX_WEB_URL>/login/#t=<token>` yang berlaku 10 menit dan hanya sekali. Web menukarnya lewat `POST /v1/login` dengan sesi 7 hari, lalu `GET /v1/me` (header `Authorization: Bearer`) memberi alamat wallet game pemain. Tanpa secret, API tetap hanya GET.
 
-GET/HEAD saja, CORS `*`, `ETag` = blok terindeks (304 sampai indeks maju), `Cache-Control: public, max-age=5`, batas `NOX_API_RATE_PER_MINUTE` (default 120) per IP.
+API berjalan di **Fastify**. Spesifikasi OpenAPI 3 semua route ada di `GET /v1/openapi.json` (untuk tim FE). GET/HEAD saja, CORS `*`, `ETag` = blok terindeks (304 sampai indeks maju), `Cache-Control: public, max-age=5`, batas `NOX_API_RATE_PER_MINUTE` (default 120) per IP; parameter salah → 400 dengan nama field-nya.
 
 | Variabel | Default | Arti |
 |---|---|---|

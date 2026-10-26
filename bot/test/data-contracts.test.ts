@@ -34,9 +34,10 @@ describe("data contracts doc", () => {
     for (const c of all(read("bot/scripts/indexer.ts"), /name: "(Nox\w+)"/g)) expect(doc, `contract ${c}`).toContain(c);
   });
 
-  it("names every public API resource", () => {
-    const resources = all(read("bot/src/api.ts"), /case "(\w+)":/g);
-    expect(resources).toContain("engagement");
-    for (const r of resources) expect(doc, `/v1/${r}`).toContain("/v1/" + r);
+  it("names every public API route", () => {
+    // Fastify routes: "/v1/games/:id" is written "/v1/games/<id>" in the doc.
+    const routes = all(read("bot/src/api.ts"), /app\.(?:get|post)\(\s*"(\/v1\/[^"]+)"/g).map((r) => r.replace(/:(\w+)/g, "<$1>"));
+    expect(routes).toContain("/v1/engagement");
+    for (const r of routes) expect(doc, r).toContain(r);
   });
 });

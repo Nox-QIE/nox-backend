@@ -1,5 +1,4 @@
 import { DatabaseSync } from "node:sqlite";
-import type { AddressInfo } from "node:net";
 import type { Abi } from "viem";
 import { describe, expect, it } from "vitest";
 import { createApi } from "../src/api.js";
@@ -91,14 +90,14 @@ describe("onboarding (F01-S01, F01-D01, F01-S06, F01-S09)", () => {
     playGame(chain, 200n);
     chain.head = 300n;
     await new EventIndexer({ client: chain, store: index, contracts: [{ name: "NoxGame", address: GAME, abi: NoxGameAbi as Abi }, { name: "NoxCredits", address: CREDITS, abi: NoxCreditsAbi as Abi }], fromBlock: 100n, confirmations: 0n }).syncOnce();
-    const server = createApi({ store: index, network: "testnet", chainId: 1983 });
-    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const server = await createApi({ store: index, network: "testnet", chainId: 1983 });
+    const base = await server.listen({ port: 0, host: "127.0.0.1" });
     try {
-      const stats = await statsFromApi(`http://127.0.0.1:${(server.address() as AddressInfo).port}`)(ben);
+      const stats = await statsFromApi(base)(ben);
       expect(stats).toMatchObject({ credits: 30, games: 1, wins: 1, rank: 1 });
-      expect(await statsFromApi(`http://127.0.0.1:${(server.address() as AddressInfo).port}`)("0x00000000000000000000000000000000000000ff")).toBeNull();
+      expect(await statsFromApi(base)("0x00000000000000000000000000000000000000ff")).toBeNull();
     } finally {
-      server.close();
+      await server.close();
     }
   });
 });
