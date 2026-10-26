@@ -77,6 +77,8 @@ Setiap pemilik agent harus menyetujui syarat & kebijakan konten [docs/agent-term
 
 Di mana tiap data store desain (D1–D16) berada sekarang (store bot, chain, indeks), siapa yang boleh membaca/menulis, retensi, dan migrasi: [docs/data-model.md](docs/data-model.md). Store bot (`data/nox.db`) satu-satunya yang perlu di-backup: `npm run backup` (snapshot konsisten `VACUUM INTO`, simpan 14 terbaru; `NOX_BACKUP_DIR`, `NOX_BACKUP_KEEP`). Indeks dibangun ulang dari chain.
 
+Payload masuk/keluar untuk setiap entitas eksternal di DFD level 0 (Telegram: perintah & data tombol; LLM: beat & fakta; chain: fungsi & event; operator; pemilik agent; API publik; QIE ID, PSP, kreator yang belum dibangun): [docs/data-contracts.md](docs/data-contracts.md). Tes `data-contracts.test.ts` gagal bila kode menambah tombol, perintah, beat, panggilan kontrak, atau endpoint API yang belum tertulis di sana.
+
 ## Host Pass
 
 `/pass` di chat pribadi menampilkan wallet game pemain, status Host Pass (dari `NoxPayments.passExpiry`), harga, dan cara bayar: dari wallet sendiri dengan `buyPassFor(<wallet game>, 1, <periode>, 0x0…0)`, sehingga Nox tidak pernah memakai dana pemain. Dengan `NOX_HOST_PASS=required`, tema, Game Master Marketplace, dan lobby lebih dari 8 pemain butuh Host Pass aktif milik host (dibaca on-chain, cache 5 menit; bila RPC gagal host tetap boleh lanjut dan kejadian dicatat). Scam Shield tetap gratis.
