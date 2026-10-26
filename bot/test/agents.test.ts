@@ -1,10 +1,11 @@
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { checkPersona, type AgentRecord, type Persona } from "../src/agents.js";
+import { AGENT_TERMS, checkPersona, type AgentRecord, type Persona } from "../src/agents.js";
 import { systemPrompt } from "../src/gm/prompt.js";
 import { TemplateNarrator } from "../src/narrator.js";
 import { Registry } from "../src/registry.js";
 import { SqliteStore, storeKey } from "../src/store.js";
-import { FakeMessenger, FakeScheduler } from "./fakes.js";
+import { FakeMessenger, FakeScheduler, tempDbPath } from "./fakes.js";
 
 const noir: Persona = {
   name: "Noir Detective",
@@ -25,6 +26,13 @@ describe("persona checks", () => {
     expect(bad.join("\n")).toMatch(/style: no link/);
     expect(bad.join("\n")).toMatch(/at most 3 examples/);
     expect(bad.join("\n")).toMatch(/langs/);
+  });
+
+  it("rejects names and taglines that pose as Nox, QIE, Telegram or staff", () => {
+    expect(checkPersona({ ...noir, name: "Nox Official" }).join("\n")).toMatch(/name: may not pose/);
+    expect(checkPersona({ ...noir, tagline: "Admin QIE resmi" }).join("\n")).toMatch(/tagline: may not pose/);
+    // Only whole words: "Noxious" and "Noir" are fine.
+    expect(checkPersona({ ...noir, name: "Noxious Fog" })).toEqual([]);
   });
 });
 
@@ -47,8 +55,8 @@ describe("persona prompt", () => {
 describe("agent picker in the lobby", () => {
   function setup() {
     const store = new SqliteStore(":memory:", storeKey("ab".repeat(32)));
-    const id = store.addAgent("0x" + "11".repeat(20), noir);
-    store.addAgent("0x" + "22".repeat(20), { ...noir, name: "Wayang", langs: ["id"] });
+    const id = store.addAgent("0x" + "11".repeat(20), noir, AGENT_TERMS.version);
+    store.addAgent("0x" + "22".repeat(20), { ...noir, name: "Wayang", langs: ["id"] }, AGENT_TERMS.version);
     const personas: (Persona | undefined)[] = [];
     const messenger = new FakeMessenger();
     const scheduler = new FakeScheduler();
@@ -122,5 +130,34 @@ describe("agent picker in the lobby", () => {
     registry.markStarted(11);
     await registry.create(-1, 11, "Ava", "en");
     expect(messenger.sent[0]!.keyboard).toHaveLength(1);
+  });
+});
+
+describe("agent owner terms", () => {
+  const owner = "0x" + "11".repeat(20);
+
+  it("offers only agents whose owner accepted the current terms", () => {
+    const store = new SqliteStore(":memory:");
+    const current = store.addAgent(owner, noir, AGENT_TERMS.version);
+    const old = store.addAgent(owner, { ...noir, name: "Old Terms" }, AGENT_TERMS.version - 1);
+    expect(store.listAgents(true).map((a) => a.id)).toEqual([current]);
+    expect(store.listAgents().map((a) => a.termsVersion)).toEqual([AGENT_TERMS.version, AGENT_TERMS.version - 1]);
+    store.acceptAgentTerms(old, AGENT_TERMS.version);
+    expect(store.listAgents(true).map((a) => a.id)).toEqual([current, old]);
+    store.setAgentStatus(current, "suspended");
+    expect(store.listAgents(true).map((a) => a.id)).toEqual([old]);
+  });
+
+  it("hides agents added before the terms existed until their owner accepts", () => {
+    const path = tempDbPath("terms");
+    const db = new DatabaseSync(path);
+    db.exec("CREATE TABLE agents (id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT NOT NULL, persona TEXT NOT NULL, status TEXT NOT NULL, chain_agent_id INTEGER, created_at INTEGER NOT NULL)");
+    db.prepare("INSERT INTO agents (owner, persona, status, created_at) VALUES (?, ?, 'active', 0)").run(owner, JSON.stringify(noir));
+    db.close();
+    const store = new SqliteStore(path);
+    expect(store.getAgent(1)).toMatchObject({ status: "active", termsVersion: null });
+    expect(store.listAgents(true)).toEqual([]);
+    store.acceptAgentTerms(1, AGENT_TERMS.version);
+    expect(store.listAgents(true)).toHaveLength(1);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { suspensionReason, type AgentRecord } from "../src/agents.js";
+import { AGENT_TERMS, suspensionReason, type AgentRecord } from "../src/agents.js";
 import { TemplateNarrator, type NarratorReport } from "../src/narrator.js";
 import { Registry } from "../src/registry.js";
 import { SqliteStore } from "../src/store.js";
@@ -30,7 +30,7 @@ describe("agent health rule (F18-S11)", () => {
 describe("automatic suspension and moderation log (F18-S11, F18-D06)", () => {
   it("records each game, suspends once, notes why and tells the operator", () => {
     const store = new SqliteStore(":memory:");
-    const id = store.addAgent("0x00000000000000000000000000000000000a9e01", persona);
+    const id = store.addAgent("0x00000000000000000000000000000000000a9e01", persona, AGENT_TERMS.version);
     const messenger = new FakeMessenger();
     const logs: Record<string, unknown>[] = [];
     const done = onAgentGame({ store, messenger, operatorChatId: 7, log: (l) => logs.push(l) });

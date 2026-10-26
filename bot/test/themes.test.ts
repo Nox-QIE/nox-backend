@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkPersona } from "../src/agents.js";
+import { AGENT_TERMS, checkPersona } from "../src/agents.js";
 import { systemPrompt } from "../src/gm/prompt.js";
 import { TemplateNarrator } from "../src/narrator.js";
 import { Registry } from "../src/registry.js";
@@ -28,7 +28,7 @@ describe("Nox themes", () => {
 
   it("preselects a theme from /newgame, lists themes before Marketplace agents, and keeps theme games out of revenue", async () => {
     const store = new SqliteStore(":memory:");
-    const agentId = store.addAgent("0x" + "11".repeat(20), { name: "Wayang", tagline: "", style: "y".repeat(50), examples: [], langs: ["id"] });
+    const agentId = store.addAgent("0x" + "11".repeat(20), { name: "Wayang", tagline: "", style: "y".repeat(50), examples: [], langs: ["id"] }, AGENT_TERMS.version);
     const messenger = new FakeMessenger();
     const scheduler = new FakeScheduler();
     const personas: string[] = [];

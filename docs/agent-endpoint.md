@@ -29,6 +29,8 @@ const ok = crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature))
 
 ## Rules your text must follow
 
+You accepted the [agent owner terms and content policy](agent-terms.md) when your agent was added. The automatic part of that policy:
+
 The same guard as Nox's own narration applies. A line is dropped (and Nox's own voice or the template is used) when it:
 - names a living player, or hints at anyone's role;
 - contains a link or domain, HTML or markdown, an @mention;

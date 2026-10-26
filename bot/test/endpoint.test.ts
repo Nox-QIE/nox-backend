@@ -4,6 +4,7 @@ import { checkEndpointUrl, EndpointModel, httpsPost, isPublicAddress, safeLookup
 import { LlmNarrator } from "../src/gm/llm-narrator.js";
 import type { GmCompletion, GmModel } from "../src/gm/model.js";
 import { userPrompt } from "../src/gm/prompt.js";
+import { AGENT_TERMS } from "../src/agents.js";
 import { SqliteStore } from "../src/store.js";
 import { tempDbPath } from "./fakes.js";
 
@@ -137,7 +138,7 @@ describe("endpoint agents in the store (F18-D01)", () => {
     const path = tempDbPath("ep");
     const store = new SqliteStore(path, Buffer.alloc(32, 9));
     const secret = "cd".repeat(32);
-    const id = store.addEndpointAgent("0x00000000000000000000000000000000000a9e01", persona, "https://agent.example.com/gm", secret);
+    const id = store.addEndpointAgent("0x00000000000000000000000000000000000a9e01", persona, "https://agent.example.com/gm", secret, AGENT_TERMS.version);
     expect(store.getAgent(id)).toMatchObject({ mode: "endpoint", endpoint: "https://agent.example.com/gm", status: "active" });
     expect(store.agentSecret(id)).toBe(secret);
     store.close();
