@@ -6,6 +6,7 @@ import { noLedger, type GameLedger } from "./chain/ledger.js";
 import { chainFor, rpcTransport, ViemLedger, type PlayerReward, type ViemLedgerOptions } from "./chain/viem-ledger.js";
 import { PassReader, type PassClient } from "./chain/passes.js";
 import { Practice, PRACTICE, PRACTICE_PAYLOADS, practiceLink } from "./practice.js";
+import { AlertMonitor } from "./alerts.js";
 import { qie, TreasuryWatch } from "./treasury.js";
 import { RateLimiter, rateLimitMiddleware } from "./ratelimit.js";
 import { PlayerWallets } from "./chain/wallets.js";
@@ -72,7 +73,7 @@ export function narratorFactory(
 ): (lang: "id" | "en", persona?: Persona, wording?: Wording, agent?: AgentRecord) => Narrator {
   if (gm.mode === "template") return (lang, _persona, wording) => new TemplateNarrator(lang, wording);
   const pool = buildGmPool(gm);
-  const log = (line: Record<string, unknown>) => console.log(JSON.stringify(line));
+  const log = (line: Record<string, unknown>) => logLine(line);
   // Each game (room) gets its own pick from the pool.
   return (lang, persona, wording, agent) => {
     const secret = agent?.mode === "endpoint" && agent.endpoint ? endpointSecret?.(agent.id) : null;
@@ -106,7 +107,12 @@ export function buildGmPool(gm: GmConfig): GmModelPool {
 
 
 
-const logLine = (l: Record<string, unknown>) => console.log(JSON.stringify(l));
+/** Error-rate alerts (APP-08): set when the bot starts with an operator to tell. */
+let alertMonitor: AlertMonitor | null = null;
+const logLine = (l: Record<string, unknown>) => {
+  console.log(JSON.stringify(l));
+  alertMonitor?.observe(l);
+};
 
 /** Callbacks the bot hangs on the ledger (store updates, alerts, DMs). */
 export type LedgerHooks = Partial<Pick<ViemLedgerOptions, "onSettled" | "onDisputed" | "onRewards" | "onTx" | "onOperatorBalance">>;
@@ -273,6 +279,11 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
   bot.use(rateLimitMiddleware(new RateLimiter(rateLimit), (ctx) => T[langFrom(ctx.from?.language_code)].slowDown, logLine));
   const messenger = telegramMessenger(bot);
   const store = new SqliteStore(dbPath, chain.walletSecret ? storeKey(chain.walletSecret) : null);
+  if (operatorChatId) {
+    alertMonitor = new AlertMonitor({
+      send: (text) => void messenger.sendDM(operatorChatId, text).catch(() => console.log(JSON.stringify({ event: "alert_send_error" }))),
+    });
+  }
   const ledger = buildLedger(
     chain,
     logLine,
@@ -314,6 +325,7 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
     store,
     ...(webUrl ? { webUrl } : {}),
     onAgentGame: onAgentGame({ store, messenger, ...(operatorChatId ? { operatorChatId } : {}) }),
+    onGameReport: (g) => store.recordGmGame(g),
     ...(hostPassCheck ? { hostPass: hostPassCheck } : {}),
   });
   await recoverGames(store, ledger, messenger, logLine);

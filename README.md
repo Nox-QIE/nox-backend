@@ -79,3 +79,9 @@ Di mana tiap data store desain (D1–D16) berada sekarang (store bot, chain, ind
 ## Latihan Scam Shield (untuk keluarga)
 
 `https://t.me/<bot>?start=latihan` (atau `?start=practice`) membuka kuis 3 menit di chat pribadi: 6 pesan bergaya penipuan "misi berbayar" (satu di antaranya aman), pilih penipuan atau aman, tiap jawaban dijelaskan, lalu kartu Scam Shield dan tautan untuk diteruskan. `/latihan` di grup mengirim tautannya. Tidak butuh wallet dan tidak membuat akun; jawaban hanya di memori selama kuis, store menyimpan hitungan harian (dimulai/selesai) saja.
+
+## Observabilitas
+
+- Tiap game selesai mencatat pemakaian AI di `gm_games` (model, token, biaya USD, beat oleh persona / suara Nox / template).
+- Lonjakan error memicu DM ke `NOX_OPERATOR_CHAT_ID` (maks sekali per jam per jenis): ≥3 `chain_error` dalam 10 menit, ≥10 `gm_error`, ≥5 `bot_error`. Insiden tunggal (game disputed, saldo operator menipis, agent di-suspend) punya alert sendiri.
+- `npm run ops:report [hari]`: per hari game, kursi, biaya AI, porsi template, gas, tx gagal, latihan Scam Shield (selesai/dimulai), dan saldo operator terakhir.

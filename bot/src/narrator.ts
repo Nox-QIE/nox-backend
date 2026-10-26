@@ -25,6 +25,11 @@ export interface NarratorReport {
   rejected: number;
   /** The persona was set aside during the game. */
   demoted: boolean;
+  /** LLM use for the game (F09-D05): the primary model, tokens, and cost in USD (null when unpriced). */
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number | null;
 }
 
 /**

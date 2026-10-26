@@ -81,6 +81,9 @@ export interface Store {
   txsOfGame(gameId: Hex): StoredTx[];
   txsBetween(fromMs: number, toMs: number): StoredTx[];
   recordOperatorBalance(wei: bigint): void;
+  /** AI use per finished game (F09-D05). */
+  recordGmGame(g: { gameId: Hex | null; agentId: number | null; players: number; report: NarratorReport }): void;
+  gmGames(fromMs: number, toMs: number): GmGameRow[];
   /** Scam Shield practice (F10-D05): daily counts only, never who took it or how they answered. */
   practiceStarted(): void;
   practiceFinished(): void;
@@ -92,6 +95,20 @@ export interface Store {
   addModeration(agentId: number, decision: "suspended" | "activated" | "note", reason: string, by: string): void;
   moderationLog(agentId: number): ModerationEntry[];
   operatorBalances(fromMs: number): { at: number; wei: bigint }[];
+}
+
+export interface GmGameRow {
+  gameId: Hex | null;
+  agentId: number | null;
+  players: number;
+  model: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number | null;
+  persona: number;
+  nox: number;
+  template: number;
+  at: number;
 }
 
 export interface AgentGame extends NarratorReport {
@@ -179,6 +196,20 @@ export class SqliteStore implements Store {
       CREATE INDEX IF NOT EXISTS chain_txs_game ON chain_txs (game_id);
       CREATE INDEX IF NOT EXISTS chain_txs_at ON chain_txs (at);
       CREATE TABLE IF NOT EXISTS operator_balances (at INTEGER PRIMARY KEY, wei TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS gm_games (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        game_id TEXT,
+        agent_id INTEGER,
+        players INTEGER NOT NULL,
+        model TEXT,
+        input_tokens INTEGER NOT NULL,
+        output_tokens INTEGER NOT NULL,
+        cost_usd REAL,
+        persona INTEGER NOT NULL,
+        nox INTEGER NOT NULL,
+        template INTEGER NOT NULL,
+        at INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS practice_stats (day TEXT PRIMARY KEY, started INTEGER NOT NULL DEFAULT 0, finished INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS agent_games (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -444,6 +475,31 @@ export class SqliteStore implements Store {
 
   txsBetween(fromMs: number, toMs: number) {
     return this.txs("at >= ? AND at < ?", fromMs, toMs);
+  }
+
+  recordGmGame(g: { gameId: Hex | null; agentId: number | null; players: number; report: NarratorReport }) {
+    const r = g.report;
+    this.db
+      .prepare(
+        "INSERT INTO gm_games (game_id, agent_id, players, model, input_tokens, output_tokens, cost_usd, persona, nox, template, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(g.gameId, g.agentId, g.players, r.model ?? null, r.inputTokens ?? 0, r.outputTokens ?? 0, r.costUsd ?? null, r.persona, r.nox, r.template, Date.now());
+  }
+
+  gmGames(fromMs: number, toMs: number): GmGameRow[] {
+    return (this.db.prepare("SELECT * FROM gm_games WHERE at >= ? AND at < ? ORDER BY id").all(fromMs, toMs) as Record<string, string | number | null>[]).map((r) => ({
+      gameId: r.game_id as Hex | null,
+      agentId: r.agent_id == null ? null : Number(r.agent_id),
+      players: Number(r.players),
+      model: (r.model as string | null) ?? null,
+      inputTokens: Number(r.input_tokens),
+      outputTokens: Number(r.output_tokens),
+      costUsd: r.cost_usd == null ? null : Number(r.cost_usd),
+      persona: Number(r.persona),
+      nox: Number(r.nox),
+      template: Number(r.template),
+      at: Number(r.at),
+    }));
   }
 
   private practiceBump(column: "started" | "finished") {

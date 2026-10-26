@@ -50,6 +50,8 @@ export interface RoomDeps {
    * Master, more than FREE_MAX_PLAYERS players. Unset = no gating (NOX_HOST_PASS=off).
    */
   hostPass?: (userId: number) => Promise<boolean>;
+  /** Every finished game's narrator report (AI cost per game, F09-D05). */
+  onGameReport?: (r: { gameId: Hex | null; agentId: number | null; players: number; report: NarratorReport }) => void;
   /** A finished game narrated by a Marketplace agent: how its persona behaved (F18-S11). */
   onAgentGame?: (agentId: number, report: NarratorReport) => void;
 }
@@ -433,6 +435,7 @@ export class GameRoom {
       }
     }
     const report = this.narrator.finish?.();
+    if (report) this.deps.onGameReport?.({ gameId: this.gameId, agentId, players: this.players.size, report });
     if (report && agentId !== null) this.deps.onAgentGame?.(agentId, report);
     this.deps.onClosed(this);
     return true;
