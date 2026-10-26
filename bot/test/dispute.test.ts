@@ -60,8 +60,8 @@ describe("disputed games (F08-S03)", () => {
       store,
       gameId,
       rewards: [
-        { userId: 1, base: 30, role: 5, vote: 2, streak: 4, total: 41, streakDays: 3 },
-        { userId: 2, base: 10, role: 0, vote: 0, streak: 0, total: 10, streakDays: 1 },
+        { userId: 1, base: 30, role: 5, vote: 2, streak: 4, scamShield: 0, total: 41, streakDays: 3 },
+        { userId: 2, base: 10, role: 0, vote: 0, streak: 0, scamShield: 0, total: 10, streakDays: 1 },
       ],
     });
     const seer = messenger.dms(1)[0]!.html;

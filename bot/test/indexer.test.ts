@@ -106,7 +106,7 @@ describe("event indexer", () => {
     chain.logs.push(game("RewardGranted", { gameId, player: ben, version: 1, base: 30, roleBonus: 5, voteBonus: 2, streakBonus: 0 }, 204n, 9));
     chain.head = 300n;
     await indexer.syncOnce();
-    expect(store.player(ben).history[0]!.reward).toEqual({ version: 1, base: 30, role: 5, vote: 2, streak: 0, total: 37 });
+    expect(store.player(ben).history[0]!.reward).toEqual({ version: 1, base: 30, role: 5, vote: 2, streak: 0, scamShield: 0, total: 37 });
     expect(store.player(cy).history[0]!.reward).toBeNull();
   });
 
