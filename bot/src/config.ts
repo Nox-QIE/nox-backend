@@ -38,6 +38,8 @@ export interface ChainConfig {
   /** Daily gas drip caps in wei: per player and for all players together. */
   dailyPerPlayerWei: bigint;
   dailyBudgetWei: bigint;
+  /** Alert the operator when its wallet holds less than this (wei). */
+  treasuryAlertWei: bigint;
 }
 
 export interface Config {
@@ -153,6 +155,7 @@ export function loadChainConfig(env: NodeJS.ProcessEnv = process.env): ChainConf
     minWei: qieToWei(env.NOX_GAS_MIN || "0.0005", "NOX_GAS_MIN"),
     dailyPerPlayerWei: qieToWei(env.NOX_GAS_DAILY_PER_PLAYER || "0.01", "NOX_GAS_DAILY_PER_PLAYER"),
     dailyBudgetWei: qieToWei(env.NOX_GAS_DAILY_BUDGET || "5", "NOX_GAS_DAILY_BUDGET"),
+    treasuryAlertWei: qieToWei(env.NOX_TREASURY_ALERT || "0.5", "NOX_TREASURY_ALERT"),
     paymentsFromBlock: BigInt(env.NOX_PAYMENTS_FROM_BLOCK || 0),
   };
   for (const [key, field] of [["NOX_AGENT_REGISTRY_ADDRESS", "agentRegistryAddress"], ["NOX_PAYMENTS_ADDRESS", "paymentsAddress"]] as const) {

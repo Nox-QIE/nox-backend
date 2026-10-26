@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { Hex } from "viem";
 import type { AgentRecord, Persona } from "./agents.js";
 import type { LedgerNightReveal, LedgerRoleReveal } from "./chain/ledger.js";
+import type { TxRecord } from "./chain/viem-ledger.js";
 import type { Lang } from "./i18n.js";
 
 /** "disputed" games keep their secrets (the evidence) and are never purged automatically. */
@@ -63,6 +64,16 @@ export interface Store {
   recordFinishedGame(g: { agentId: number | null; players: number; hostId: number; chainGameId: Hex | null }): void;
   finishedGames(fromMs: number, toMs: number): FinishedGame[];
   agentUsage(fromMs: number, toMs: number): { agentId: number; games: number; players: number }[];
+  /** Gas & transaction ledger (D14): one row per transaction the ledger sent or gave up on. */
+  recordTx(tx: TxRecord): void;
+  txsOfGame(gameId: Hex): StoredTx[];
+  txsBetween(fromMs: number, toMs: number): StoredTx[];
+  recordOperatorBalance(wei: bigint): void;
+  operatorBalances(fromMs: number): { at: number; wei: bigint }[];
+}
+
+export interface StoredTx extends TxRecord {
+  at: number;
 }
 
 /** Store encryption key, derived from the wallet secret so there is no extra secret to manage. */
@@ -103,6 +114,24 @@ export class SqliteStore implements Store {
         chain_game_id TEXT,
         ended_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS chain_txs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        game_id TEXT,
+        step TEXT NOT NULL,
+        from_addr TEXT NOT NULL,
+        to_addr TEXT NOT NULL,
+        hash TEXT,
+        status TEXT NOT NULL,
+        gas_used TEXT,
+        fee_wei TEXT,
+        block INTEGER,
+        attempts INTEGER NOT NULL,
+        error TEXT,
+        at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS chain_txs_game ON chain_txs (game_id);
+      CREATE INDEX IF NOT EXISTS chain_txs_at ON chain_txs (at);
+      CREATE TABLE IF NOT EXISTS operator_balances (at INTEGER PRIMARY KEY, wei TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS games (
         game_id TEXT PRIMARY KEY,
         chat_id INTEGER NOT NULL,
@@ -233,6 +262,64 @@ export class SqliteStore implements Store {
         "SELECT id, agent_id AS agentId, players, host_id AS hostId, chain_game_id AS chainGameId, ended_at AS endedAt FROM finished_games WHERE ended_at >= ? AND ended_at < ? ORDER BY id",
       )
       .all(fromMs, toMs) as unknown as FinishedGame[];
+  }
+
+  recordTx(tx: TxRecord) {
+    this.db
+      .prepare(
+        "INSERT INTO chain_txs (game_id, step, from_addr, to_addr, hash, status, gas_used, fee_wei, block, attempts, error, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        tx.gameId,
+        tx.step,
+        tx.from,
+        tx.to,
+        tx.hash,
+        tx.status,
+        tx.gasUsed?.toString() ?? null,
+        tx.feeWei?.toString() ?? null,
+        tx.block === null ? null : Number(tx.block),
+        tx.attempts,
+        tx.error,
+        Date.now(),
+      );
+  }
+
+  private txs(where: string, ...params: (string | number)[]): StoredTx[] {
+    const rows = this.db.prepare(`SELECT * FROM chain_txs WHERE ${where} ORDER BY id`).all(...params) as Record<string, string | number | null>[];
+    return rows.map((r) => ({
+      gameId: r.game_id as Hex | null,
+      step: r.step as string,
+      from: r.from_addr as Hex,
+      to: r.to_addr as Hex,
+      hash: r.hash as Hex | null,
+      status: r.status as TxRecord["status"],
+      gasUsed: r.gas_used == null ? null : BigInt(r.gas_used),
+      feeWei: r.fee_wei == null ? null : BigInt(r.fee_wei),
+      block: r.block == null ? null : BigInt(r.block),
+      attempts: Number(r.attempts),
+      error: r.error as string | null,
+      at: Number(r.at),
+    }));
+  }
+
+  txsOfGame(gameId: Hex) {
+    return this.txs("game_id = ?", gameId);
+  }
+
+  txsBetween(fromMs: number, toMs: number) {
+    return this.txs("at >= ? AND at < ?", fromMs, toMs);
+  }
+
+  recordOperatorBalance(wei: bigint) {
+    this.db.prepare("INSERT OR REPLACE INTO operator_balances (at, wei) VALUES (?, ?)").run(Date.now(), wei.toString());
+  }
+
+  operatorBalances(fromMs: number) {
+    return (this.db.prepare("SELECT at, wei FROM operator_balances WHERE at >= ? ORDER BY at").all(fromMs) as { at: number; wei: string }[]).map((r) => ({
+      at: r.at,
+      wei: BigInt(r.wei),
+    }));
   }
 
   agentUsage(fromMs: number, toMs: number) {
