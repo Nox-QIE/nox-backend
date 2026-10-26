@@ -12,6 +12,10 @@ export interface AgentRecord {
   status: "active" | "suspended";
   /** Id in NoxAgentRegistry once registered on-chain, for revenue settlement. */
   chainAgentId: number | null;
+  /** "persona" (default): Nox's LLM speaks in the persona. "endpoint": the owner's own service writes the lines. */
+  mode?: "persona" | "endpoint";
+  /** https URL of the owner's service (endpoint mode). Its signing secret stays in the store, encrypted. */
+  endpoint?: string | null;
 }
 
 const LIMITS = { name: [2, 32], tagline: [0, 80], style: [40, 1200], example: [0, 200], examples: 3 } as const;

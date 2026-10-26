@@ -1,6 +1,8 @@
 /**
  * Operator CLI for the Agent Marketplace (hosted personas). Runs against the bot's SQLite store.
  *   node --env-file=.env --import tsx bot/scripts/agents.ts add <owner-wallet> <persona.json>
+ *   node --env-file=.env --import tsx bot/scripts/agents.ts add-endpoint <owner-wallet> <persona.json> <https-url>
+ *   node --env-file=.env --import tsx bot/scripts/agents.ts ping <id>      (sends a test beat to an endpoint agent)
  *   node --env-file=.env --import tsx bot/scripts/agents.ts list
  *   node --env-file=.env --import tsx bot/scripts/agents.ts suspend|activate <id> "<reason>"
  *   node --env-file=.env --import tsx bot/scripts/agents.ts log <id>       (moderation log + recent health)
@@ -12,9 +14,14 @@ import { readFileSync } from "node:fs";
 import { checkPersona, HEALTH, isAddress, type Persona } from "../src/agents.js";
 import { operatorFrom, registerAgentOnChain } from "../src/chain/operator.js";
 import { loadChainConfig } from "../src/config.js";
-import { SqliteStore } from "../src/store.js";
+import { SqliteStore, storeKey } from "../src/store.js";
+import { checkEndpointUrl, EndpointModel, newEndpointSecret, safeLookup } from "../src/gm/endpoint.js";
+import { checkNarration } from "../src/gm/guard.js";
+import { userPrompt } from "../src/gm/prompt.js";
 
-const store = new SqliteStore(process.env.NOX_DB_PATH || "data/nox.db");
+// The key (from NOX_WALLET_SECRET) seals endpoint secrets, as in the bot.
+const secretHex = process.env.NOX_WALLET_SECRET;
+const store = new SqliteStore(process.env.NOX_DB_PATH || "data/nox.db", secretHex ? storeKey(secretHex) : null);
 const [cmd, a, b] = process.argv.slice(2);
 
 switch (cmd) {
@@ -29,9 +36,36 @@ switch (cmd) {
     console.log(`Agent #${store.addAgent(a, persona)} "${persona.name}" added (active).`);
     break;
   }
+  case "add-endpoint": {
+    const url = process.argv[5];
+    if (!a || !isAddress(a) || !b || !url) throw new Error("usage: add-endpoint <owner-wallet 0x…> <persona.json> <https-url>");
+    const persona = JSON.parse(readFileSync(b, "utf8")) as Persona;
+    const problems = checkPersona(persona);
+    if (problems.length) {
+      console.error(`Persona rejected:\n- ${problems.join("\n- ")}`);
+      process.exit(1);
+    }
+    const checked = checkEndpointUrl(url);
+    // Resolve now too, so an owner learns at once if the name points somewhere Nox will not call.
+    await new Promise<void>((resolve, reject) => safeLookup()(checked.hostname, { all: true }, (err) => (err ? reject(err) : resolve())));
+    const secret = newEndpointSecret();
+    const id = store.addEndpointAgent(a, persona, checked.toString(), secret);
+    console.log(`Agent #${id} "${persona.name}" added (active, endpoint ${checked.toString()}).`);
+    console.log(`Signing secret for the owner (shown once; Nox stores it encrypted):\n${secret}`);
+    break;
+  }
+  case "ping": {
+    const agent = store.getAgent(Number(a));
+    if (!agent || agent.mode !== "endpoint" || !agent.endpoint) throw new Error(`agent ${a ?? ""} is not an endpoint agent`);
+    const model = new EndpointModel({ agentId: agent.id, url: agent.endpoint, secret: store.agentSecret(agent.id)!, lang: agent.persona.langs[0] ?? "en" });
+    const r = await model.complete("", userPrompt({ kind: "nightFalls", round: 1, alive: 5 }), 8000);
+    const g = checkNarration(r.text, []);
+    console.log(g.ok ? `OK: ${g.text}` : `Answer rejected by the guard (${g.reason}): ${r.text}`);
+    break;
+  }
   case "list":
     for (const g of store.listAgents()) {
-      console.log(`#${g.id} ${g.status.padEnd(9)} ${g.persona.name} [${g.persona.langs.join(",")}] owner ${g.owner}${g.chainAgentId ? ` chain #${g.chainAgentId}` : ""}`);
+      console.log(`#${g.id} ${g.status.padEnd(9)} ${g.persona.name} [${g.persona.langs.join(",")}] owner ${g.owner}${g.chainAgentId ? ` chain #${g.chainAgentId}` : ""}${g.mode === "endpoint" ? ` endpoint ${g.endpoint}` : ""}`);
     }
     break;
   case "suspend":

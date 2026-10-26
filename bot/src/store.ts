@@ -57,6 +57,9 @@ export interface Store {
   /** Right to erasure for off-chain data: forget a player who pressed Start and unlink them as host. */
   forgetUser(userId: number): void;
   addAgent(owner: string, persona: Persona): number;
+  /** An agent backed by its owner's https service; `secret` signs Nox's requests and is stored encrypted. */
+  addEndpointAgent(owner: string, persona: Persona, endpoint: string, secret: string): number;
+  agentSecret(id: number): string | null;
   getAgent(id: number): AgentRecord | null;
   listAgents(activeOnly?: boolean): AgentRecord[];
   setAgentStatus(id: number, status: AgentRecord["status"]): void;
@@ -124,7 +127,10 @@ export class SqliteStore implements Store {
         persona TEXT NOT NULL,
         status TEXT NOT NULL,
         chain_agent_id INTEGER,
-        created_at INTEGER NOT NULL
+        created_at INTEGER NOT NULL,
+        mode TEXT NOT NULL DEFAULT 'persona',
+        endpoint TEXT,
+        secret BLOB
       );
       CREATE TABLE IF NOT EXISTS finished_games (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -181,6 +187,11 @@ export class SqliteStore implements Store {
         updated_at INTEGER NOT NULL
       );
     `);
+    // Databases created before endpoint agents (F18-S10) lack these columns.
+    const cols = new Set((this.db.prepare("PRAGMA table_info(agents)").all() as { name: string }[]).map((c) => c.name));
+    if (!cols.has("mode")) this.db.exec("ALTER TABLE agents ADD COLUMN mode TEXT NOT NULL DEFAULT 'persona'");
+    if (!cols.has("endpoint")) this.db.exec("ALTER TABLE agents ADD COLUMN endpoint TEXT");
+    if (!cols.has("secret")) this.db.exec("ALTER TABLE agents ADD COLUMN secret BLOB");
   }
 
   close() {
@@ -267,8 +278,28 @@ export class SqliteStore implements Store {
     return Number(r.lastInsertRowid);
   }
 
-  private toAgent(r: { id: number; owner: string; persona: string; status: AgentRecord["status"]; chain_agent_id: number | null }): AgentRecord {
-    return { id: r.id, owner: r.owner, persona: JSON.parse(r.persona) as Persona, status: r.status, chainAgentId: r.chain_agent_id };
+  addEndpointAgent(owner: string, persona: Persona, endpoint: string, secret: string): number {
+    const r = this.db
+      .prepare("INSERT INTO agents (owner, persona, status, created_at, mode, endpoint, secret) VALUES (?, ?, 'active', ?, 'endpoint', ?, ?)")
+      .run(owner, JSON.stringify(persona), Date.now(), endpoint, this.seal(secret));
+    return Number(r.lastInsertRowid);
+  }
+
+  agentSecret(id: number): string | null {
+    const r = this.db.prepare("SELECT secret FROM agents WHERE id = ?").get(id) as { secret: Uint8Array | null } | undefined;
+    return r?.secret ? this.open<string>(r.secret) : null;
+  }
+
+  private toAgent(r: {
+    id: number;
+    owner: string;
+    persona: string;
+    status: AgentRecord["status"];
+    chain_agent_id: number | null;
+    mode: "persona" | "endpoint";
+    endpoint: string | null;
+  }): AgentRecord {
+    return { id: r.id, owner: r.owner, persona: JSON.parse(r.persona) as Persona, status: r.status, chainAgentId: r.chain_agent_id, mode: r.mode, endpoint: r.endpoint };
   }
 
   getAgent(id: number): AgentRecord | null {
