@@ -110,3 +110,14 @@ describe("wallet audit (F01-D04, F01-D05)", () => {
     expect(JSON.stringify(db.prepare("SELECT * FROM wallet_audit").all())).not.toContain("987654321");
   });
 });
+
+describe("rupiah passes (D9, F14-D01)", () => {
+  it("keeps the rupiah amount per receipt, which is not on chain", () => {
+    const s = new SqliteStore(":memory:");
+    const p = { receiptHash: ("0x" + "ab".repeat(32)) as `0x${string}`, holder: ("0x" + "11".repeat(20)) as `0x${string}`, passType: 1, periods: 2, amount: 150_000, currency: "IDR" as const, tx: "0x01" as `0x${string}`, at: 5 };
+    s.addFiatPass(p);
+    expect(s.fiatPassByReceipt(p.receiptHash.toUpperCase().replace("0X", "0x"))).toEqual(p);
+    expect(() => s.addFiatPass(p)).toThrow(); // one row per receipt
+    expect(s.fiatPassByReceipt("0x" + "cd".repeat(32))).toBeNull();
+  });
+});

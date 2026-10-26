@@ -111,7 +111,11 @@ export function createApi(o: ApiOptions): Server {
       }
       case "players":
         if (!id || !ADDRESS.test(id)) throw new HttpError(400, "address must be 0x + 40 hex characters");
-        return store.player(id as Address);
+        // D9: the wallet's pass purchases, on chain or rupiah (amounts in wei as strings; rupiah amounts stay private).
+        return {
+          ...store.player(id as Address),
+          passes: store.passPurchases(id as Address, Math.floor(now() / 1000)).map((p) => ({ ...p, amount: p.amount === null ? null : p.amount.toString() })),
+        };
     }
     throw new HttpError(404, "not found");
   };

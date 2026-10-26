@@ -62,6 +62,8 @@ The client report (`npm run report -- <chat-id> <YYYY-MM>`) is the same calculat
 
 The all-time numbers come from the `player_stats` mirror. It is rebuilt after every indexer sync and every hour, and checked against `NoxCredits.balanceOf` (`/v1/health` → `reconciliation`). Credits are status points: they cannot be transferred or cashed out.
 
+`/v1/players/<address>` also lists the wallet's pass purchases (`passes`, D9). Each one is on chain, with amount in wei and the payer, or rupiah, with only the receipt hash. Each carries its expiry and whether it is still active.
+
 ## `GET /v1/agents/revenue`
 
 These are Agent Marketplace amounts from NoxPayments events, in the token's smallest unit, as strings. Per agent: Game Night credits and monthly pool allocations (`AgentCredited`, `AgentPoolAllocated`). Per owner: credited, withdrawn and still owed. `/v1/health` → `paymentsReconciliation` checks them against the contract's balances.

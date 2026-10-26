@@ -85,6 +85,7 @@ A line that fails falls back in layers: persona → Nox's own voice → template
 | `NoxGame.cancelGame` | operator | game id, reason |
 | `NoxBadges.award` | operator | badge id, game id, wallets |
 | `NoxAgentRegistry.registerAgent` | operator | owner wallet, mode, metadata hash |
+| `NoxPayments.recordFiatPass` | operator | holder wallet, pass type, periods, receipt hash (rupiah pass paid by hand; `npm run pass -- fiat`, which refuses a receipt already used) |
 | `NoxPayments.recordFiatGameNight` | operator | booking id, agent id, receipt hash (rupiah invoice paid) |
 | `NoxPayments.allocateAgentPool` | operator | period, token, agent ids, amounts, usage root (commitment to the per-game data) |
 | gas drip (plain transfer) | operator | value to a player wallet; ledger reason `onboarding` or `top-up` |

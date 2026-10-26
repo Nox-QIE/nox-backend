@@ -21,7 +21,8 @@
     "wallet:audit": "node --import tsx bot/scripts/wallet-audit.ts",
     "gamenight": "node --import tsx bot/scripts/gamenight.ts",
     "sponsor:report": "node --import tsx bot/scripts/sponsor-report.ts",
-    "store:rotate": "node --env-file=.env --import tsx bot/scripts/store-rotate.ts"
+    "store:rotate": "node --env-file=.env --import tsx bot/scripts/store-rotate.ts",
+    "pass": "node --import tsx bot/scripts/pass.ts"
   },
   "devDependencies": {
     "typescript": "5.9",

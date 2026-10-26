@@ -25,6 +25,18 @@ export interface FinalizePayload extends GameSecret {
   winner: number;
 }
 
+/** A Host Pass paid in rupiah and recorded on chain by the operator (D9). */
+export interface FiatPass {
+  receiptHash: Hex;
+  holder: Hex;
+  passType: number;
+  periods: number;
+  amount: number;
+  currency: "IDR";
+  tx: Hex;
+  at: number;
+}
+
 /** Discussion activity over finished games (F07-D06). Only games whose group messages could be counted carry messages. */
 export interface DiscussionStats {
   games: number;
@@ -124,6 +136,9 @@ export interface Store {
   /** Group notices already sent for a booking ("24h", "1h", "open"), F04-S06. */
   bookingNotices(id: string): string[];
   addBookingNotice(id: string, notice: string): void;
+  /** Rupiah passes (D9, F14-D01): the amount and currency, which are not on chain; one row per receipt. */
+  addFiatPass(p: FiatPass): void;
+  fiatPassByReceipt(receiptHash: string): FiatPass | null;
   /** Client themes (F04-S05): saving an existing key with new text replaces it and raises its version. */
   saveClientTheme(t: Omit<ClientTheme, "version">): { rowId: number; version: number };
   getClientTheme(key: string): (ClientTheme & { rowId: number }) | null;
@@ -290,6 +305,16 @@ export class SqliteStore implements Store {
         version INTEGER NOT NULL,
         text TEXT NOT NULL,
         updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS fiat_passes (
+        receipt_hash TEXT PRIMARY KEY,
+        holder TEXT NOT NULL,
+        pass_type INTEGER NOT NULL,
+        periods INTEGER NOT NULL,
+        amount INTEGER NOT NULL,
+        currency TEXT NOT NULL,
+        tx TEXT NOT NULL,
+        at INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS operator_balances (at INTEGER PRIMARY KEY, wei TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS gm_games (
@@ -585,6 +610,19 @@ export class SqliteStore implements Store {
   addBookingNotice(id: string, notice: string) {
     const all = [...new Set([...this.bookingNotices(id), notice])].join(",");
     this.db.prepare("UPDATE bookings SET notices = ? WHERE lower(id) = ?").run(all, id.toLowerCase());
+  }
+
+  addFiatPass(p: FiatPass) {
+    this.db
+      .prepare("INSERT INTO fiat_passes (receipt_hash, holder, pass_type, periods, amount, currency, tx, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(p.receiptHash.toLowerCase(), p.holder.toLowerCase(), p.passType, p.periods, p.amount, p.currency, p.tx, p.at);
+  }
+
+  fiatPassByReceipt(receiptHash: string): FiatPass | null {
+    const r = this.db.prepare("SELECT * FROM fiat_passes WHERE receipt_hash = ?").get(receiptHash.toLowerCase()) as Record<string, string | number> | undefined;
+    return r
+      ? { receiptHash: r.receipt_hash as Hex, holder: r.holder as Hex, passType: Number(r.pass_type), periods: Number(r.periods), amount: Number(r.amount), currency: r.currency as "IDR", tx: r.tx as Hex, at: Number(r.at) }
+      : null;
   }
 
   saveClientTheme(t: Omit<ClientTheme, "version">) {

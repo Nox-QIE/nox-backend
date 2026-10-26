@@ -106,3 +106,15 @@ export async function recordFiatGameNightOnChain(op: Operator, payments: Address
   });
   return write(op, request);
 }
+
+/** Records a rupiah-paid pass on chain (D9): the holder gets `periods` more, tied to the receipt hash. */
+export async function recordFiatPassOnChain(op: Operator, payments: Address, holder: Address, passType: number, periods: number, receiptHash: Hex): Promise<Hex> {
+  const { request } = await op.publicClient.simulateContract({
+    account: op.account,
+    address: payments,
+    abi: NoxPaymentsAbi,
+    functionName: "recordFiatPass",
+    args: [holder, passType, periods, receiptHash],
+  });
+  return write(op, request);
+}
