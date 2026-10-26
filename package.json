@@ -19,7 +19,8 @@
     "reconcile:txs": "node --env-file=.env --import tsx bot/scripts/reconcile-txs.ts",
     "content:lock": "node --import tsx bot/scripts/content-lock.ts",
     "wallet:audit": "node --import tsx bot/scripts/wallet-audit.ts",
-    "gamenight": "node --import tsx bot/scripts/gamenight.ts"
+    "gamenight": "node --import tsx bot/scripts/gamenight.ts",
+    "sponsor:report": "node --import tsx bot/scripts/sponsor-report.ts"
   },
   "devDependencies": {
     "typescript": "5.9",
