@@ -347,6 +347,9 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     const before = await expiry();
     await recordFiatPassOnChain(op, payments, host.address, 1, 1, keccak256(toHex("pass-receipt")));
     expect((await expiry()) - before).toBe(30n * 86400n);
+    // nox-contracts#16: the same receipt cannot extend the pass again.
+    await expect(recordFiatPassOnChain(op, payments, host.address, 1, 1, keccak256(toHex("pass-receipt")))).rejects.toThrow();
+    expect((await expiry()) - before).toBe(30n * 86400n);
 
     // Revenue ledger from the events (F18-D05), reconciled with the contract at the indexed block.
     const index = new EventStore(":memory:");

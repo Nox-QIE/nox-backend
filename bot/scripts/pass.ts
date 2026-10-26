@@ -4,7 +4,8 @@
  *   npm run pass -- fiat <0xwallet | tg:<telegram-id>> <periods> <rupiah> <receipt-file> [--type 1] [--send]
  * `fiat` hashes the receipt (bound to the holder; the file never leaves this machine), refuses a
  * receipt already used, and with --send records NoxPayments.recordFiatPass with the operator key.
- * The contract does not refuse a repeated receipt, so this script must. tg: needs NOX_WALLET_SECRET.
+ * NoxPayments refuses a repeated receipt since nox-contracts#16; the testnet deployment before it does
+ * not, so this script checks too. tg: needs NOX_WALLET_SECRET.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { formatUnits, type Address } from "viem";
@@ -61,7 +62,7 @@ switch (cmd) {
       throw new Error("usage: fiat <0xwallet | tg:<id>> <periods> <rupiah> <receipt-file> [--type 1] [--send]");
     }
     const hash = receiptHash(holder, readFileSync(receiptFile));
-    // recordFiatPass accepts the same receipt twice and would extend the pass twice: refuse it here.
+    // A NoxPayments deployed before nox-contracts#16 accepts the same receipt twice: refuse it here too.
     if (store.fiatPassByReceipt(hash) || index?.passPurchases(holder).some((p) => p.receiptHash?.toLowerCase() === hash)) {
       throw new Error(`receipt ${hash} was already recorded`);
     }
