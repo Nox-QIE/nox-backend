@@ -340,7 +340,9 @@ export class SqliteStore implements Store {
         template INTEGER NOT NULL,
         rejected INTEGER NOT NULL,
         demoted INTEGER NOT NULL,
-        at INTEGER NOT NULL
+        at INTEGER NOT NULL,
+        endpoint_calls INTEGER,
+        endpoint_errors INTEGER
       );
       CREATE INDEX IF NOT EXISTS agent_games_agent ON agent_games (agent_id, id);
       CREATE TABLE IF NOT EXISTS agent_moderation (
@@ -383,6 +385,9 @@ export class SqliteStore implements Store {
     if (!fgCols.has("chat_id")) this.db.exec("ALTER TABLE finished_games ADD COLUMN chat_id INTEGER");
     const bkCols = new Set((this.db.prepare("PRAGMA table_info(bookings)").all() as { name: string }[]).map((c) => c.name));
     for (const [c, type] of [["fiat_currency", "TEXT"], ["fiat_amount", "INTEGER"], ["receipt_hash", "TEXT"]]) if (!bkCols.has(c!)) this.db.exec(`ALTER TABLE bookings ADD COLUMN ${c} ${type}`);
+    const agCols = new Set((this.db.prepare("PRAGMA table_info(agent_games)").all() as { name: string }[]).map((c) => c.name));
+    if (!agCols.has("endpoint_calls")) this.db.exec("ALTER TABLE agent_games ADD COLUMN endpoint_calls INTEGER");
+    if (!agCols.has("endpoint_errors")) this.db.exec("ALTER TABLE agent_games ADD COLUMN endpoint_errors INTEGER");
     if (!fgCols.has("scenario")) this.db.exec("ALTER TABLE finished_games ADD COLUMN scenario TEXT");
     if (!fgCols.has("winner")) this.db.exec("ALTER TABLE finished_games ADD COLUMN winner TEXT");
     if (!fgCols.has("discussion")) this.db.exec("ALTER TABLE finished_games ADD COLUMN discussion TEXT");
@@ -901,14 +906,22 @@ export class SqliteStore implements Store {
 
   recordAgentGame(agentId: number, r: NarratorReport) {
     this.db
-      .prepare("INSERT INTO agent_games (agent_id, persona, nox, template, rejected, demoted, at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(agentId, r.persona, r.nox, r.template, r.rejected, r.demoted ? 1 : 0, Date.now());
+      .prepare("INSERT INTO agent_games (agent_id, persona, nox, template, rejected, demoted, at, endpoint_calls, endpoint_errors) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(agentId, r.persona, r.nox, r.template, r.rejected, r.demoted ? 1 : 0, Date.now(), r.endpointCalls ?? null, r.endpointErrors ?? null);
   }
 
   agentGames(agentId: number, limit: number): AgentGame[] {
     return (
       this.db.prepare("SELECT * FROM agent_games WHERE agent_id = ? ORDER BY id DESC LIMIT ?").all(agentId, limit) as Record<string, number>[]
-    ).map((r) => ({ persona: r.persona!, nox: r.nox!, template: r.template!, rejected: r.rejected!, demoted: r.demoted === 1, at: r.at! }));
+    ).map((r) => ({
+      persona: r.persona!,
+      nox: r.nox!,
+      template: r.template!,
+      rejected: r.rejected!,
+      demoted: r.demoted === 1,
+      at: r.at!,
+      ...(r.endpoint_calls != null ? { endpointCalls: r.endpoint_calls, endpointErrors: r.endpoint_errors ?? 0 } : {}),
+    }));
   }
 
   addModeration(agentId: number, decision: ModerationEntry["decision"], reason: string, by: string) {

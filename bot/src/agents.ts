@@ -68,15 +68,23 @@ export function checkPersona(p: Persona, o: { brand?: boolean } = {}): string[] 
 export const isAddress = (s: string) => /^0x[0-9a-fA-F]{40}$/.test(s);
 
 /** Automatic suspension rules (F18-S11), over an agent's most recent games. */
-export const HEALTH = { window: 10, maxDemotedGames: 3, minGamesForShare: 5, minPersonaShare: 0.5 } as const;
+export const HEALTH = { window: 10, maxDemotedGames: 3, minGamesForShare: 5, minPersonaShare: 0.5, minEndpointCalls: 10, maxEndpointErrorShare: 0.5 } as const;
 
 /**
  * Why an agent should be suspended now, or null. `recent` is newest first. A persona is set aside
  * in a game after repeated guard rejections; doing that in several recent games, or leaving most
  * lines to Nox's own voice or the template, means players are not getting the agent they picked.
  */
-export function suspensionReason(recent: { persona: number; nox: number; template: number; demoted: boolean }[]): string | null {
+export function suspensionReason(
+  recent: { persona: number; nox: number; template: number; demoted: boolean; endpointCalls?: number; endpointErrors?: number }[],
+): string | null {
   const games = recent.slice(0, HEALTH.window);
+  // An endpoint that keeps erroring or timing out is suspended as soon as enough calls show it.
+  const calls = games.reduce((n, g) => n + (g.endpointCalls ?? 0), 0);
+  const errors = games.reduce((n, g) => n + (g.endpointErrors ?? 0), 0);
+  if (calls >= HEALTH.minEndpointCalls && errors / calls >= HEALTH.maxEndpointErrorShare) {
+    return `endpoint failed ${errors} of its last ${calls} calls (errors or timeouts)`;
+  }
   const demoted = games.filter((g) => g.demoted).length;
   if (demoted >= HEALTH.maxDemotedGames) return `persona set aside in ${demoted} of the last ${games.length} games (guard rejections)`;
   if (games.length >= HEALTH.minGamesForShare) {

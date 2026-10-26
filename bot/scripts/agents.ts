@@ -117,6 +117,8 @@ switch (cmd) {
     if (games.length) {
       const sum = (k: "persona" | "nox" | "template") => games.reduce((n, g) => n + g[k], 0);
       console.log(`  last ${games.length} games: persona ${sum("persona")} / Nox ${sum("nox")} / template ${sum("template")} beats, set aside in ${games.filter((g) => g.demoted).length}`);
+      const calls = games.reduce((n, g) => n + (g.endpointCalls ?? 0), 0);
+      if (calls) console.log(`  endpoint: ${games.reduce((n, g) => n + (g.endpointErrors ?? 0), 0)} of ${calls} calls failed (errors or timeouts)`);
     }
     break;
   }

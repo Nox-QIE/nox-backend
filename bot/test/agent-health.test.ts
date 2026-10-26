@@ -19,6 +19,23 @@ describe("agent health rule (F18-S11)", () => {
     expect(suspensionReason([...Array(10).fill(good), demoted, demoted, demoted])).toBeNull();
   });
 
+  it("suspends an endpoint that fails half of its calls, once 10 calls show it", () => {
+    const failing = { ...outage, nox: 5, template: 0, endpointCalls: 10, endpointErrors: 6 };
+    expect(suspensionReason([failing])).toMatch(/endpoint failed 6 of its last 10 calls/);
+    expect(suspensionReason([{ ...failing, endpointCalls: 8, endpointErrors: 8 }])).toBeNull(); // too few calls to judge
+    expect(suspensionReason([{ ...failing, endpointErrors: 4 }])).toBeNull();
+    // Hosted personas have no endpoint: Nox's own provider failing never counts against them.
+    expect(suspensionReason([outage, outage])).toBeNull();
+    const store = new SqliteStore(":memory:");
+    const id = store.addAgent("0x00000000000000000000000000000000000a9e01", persona, AGENT_TERMS.version);
+    store.recordAgentGame(id, { ...good, endpointCalls: 4, endpointErrors: 1 });
+    store.recordAgentGame(id, good);
+    expect(store.agentGames(id, 10).map((g) => [g.endpointCalls, g.endpointErrors])).toEqual([
+      [undefined, undefined],
+      [4, 1],
+    ]);
+  });
+
   it("suspends when the persona writes under half the lines over 5+ games, ignoring provider outages", () => {
     const weak: NarratorReport = { persona: 2, nox: 3, template: 0, rejected: 1, demoted: false };
     expect(suspensionReason([weak, weak, weak, weak])).toBeNull(); // too few games to judge
