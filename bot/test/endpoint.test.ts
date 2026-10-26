@@ -127,6 +127,11 @@ describe("red-team: malicious endpoints (F18-S13)", () => {
       for (const b of bodies) if ((JSON.parse(b) as { facts: { kind: string } }).facts.kind !== "gameOver") expect(b).not.toContain("werewolf");
       // Content the guard rejects sets the endpoint aside for the game; errors only fall back per beat.
       expect(n.stats.personaDemoted).toBe(forbidden.length > 0);
+      // Every failed call of the agent's own service is counted for its health (F18-S11).
+      const report = n.finish();
+      expect(report.endpointCalls).toBeGreaterThan(0);
+      if (name === "hangs" || name.startsWith("redirects") || name.startsWith("answers garbage")) expect(report.endpointErrors).toBe(report.endpointCalls);
+      else expect(report.endpointErrors).toBe(0);
     });
   }
 });

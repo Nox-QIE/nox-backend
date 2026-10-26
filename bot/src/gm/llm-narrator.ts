@@ -32,6 +32,9 @@ export interface GmStats {
   voice: { persona: number; nox: number; template: number };
   /** The persona was set aside for the rest of this game after too many guard rejections. */
   personaDemoted: boolean;
+  /** Calls to an agent's own endpoint, and those that failed (error or timeout). */
+  endpointCalls: number;
+  endpointErrors: number;
 }
 
 /** Guard rejections of a persona's lines in one game before Nox's own voice takes over for good. */
@@ -69,6 +72,8 @@ export class LlmNarrator implements Narrator {
     byModel: {},
     voice: { persona: 0, nox: 0, template: 0 },
     personaDemoted: false,
+    endpointCalls: 0,
+    endpointErrors: 0,
   };
 
   constructor(private readonly opts: LlmNarratorOptions) {
@@ -91,6 +96,9 @@ export class LlmNarrator implements Narrator {
     for (const layer of layers) {
       for (let attempt = 0; attempt < layer.tries; attempt++) {
         this.stats.calls++;
+        // Only an agent's own service counts against the agent; Nox's provider failing is not its doing.
+        const endpoint = layer.voice === "persona" && this.opts.personaModel !== undefined;
+        if (endpoint) this.stats.endpointCalls++;
         try {
           const r = await layer.model.complete(layer.system, userPrompt(beat), this.opts.timeoutMs);
           addUsage(this.stats.usage, r.usage);
@@ -108,6 +116,7 @@ export class LlmNarrator implements Narrator {
           }
         } catch (e) {
           this.stats.failures++;
+          if (endpoint) this.stats.endpointErrors++;
           this.opts.log?.({ event: "gm_error", beat: beat.kind, error: e instanceof Error ? e.message : String(e) });
         }
       }
@@ -170,6 +179,7 @@ export class LlmNarrator implements Narrator {
       ...this.stats.voice,
       rejected: this.personaRejections,
       demoted: this.stats.personaDemoted,
+      ...(this.opts.personaModel ? { endpointCalls: this.stats.endpointCalls, endpointErrors: this.stats.endpointErrors } : {}),
       model: this.opts.model.model,
       inputTokens: this.stats.usage.inputTokens + this.stats.usage.cacheReadTokens + this.stats.usage.cacheWriteTokens,
       outputTokens: this.stats.usage.outputTokens,

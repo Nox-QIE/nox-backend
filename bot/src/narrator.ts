@@ -27,6 +27,9 @@ export interface NarratorReport {
   rejected: number;
   /** The persona was set aside during the game. */
   demoted: boolean;
+  /** Calls to an agent's own endpoint and how many failed (error or timeout), for its health (F18-S11). */
+  endpointCalls?: number;
+  endpointErrors?: number;
   /** LLM use for the game (F09-D05): the primary model, tokens, and cost in USD (null when unpriced). */
   model?: string;
   inputTokens?: number;

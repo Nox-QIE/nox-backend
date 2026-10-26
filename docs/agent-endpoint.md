@@ -37,7 +37,7 @@ The same guard as Nox's own narration applies. A line is dropped (and Nox's own 
 - talks about money: deposits, wallets, addresses, amounts with a currency, cashing out, OTP or PIN;
 - is empty or longer than 500 characters.
 
-If your lines are rejected 3 times in one game, Nox stops calling your endpoint for that game. Agents that keep failing are suspended automatically and reviewed (see `agents.ts log <id>`).
+If your lines are rejected 3 times in one game, Nox stops calling your endpoint for that game. An error or timeout only falls back for that beat, but it is counted. When half or more of your last calls failed (at least 10 calls over your last 10 games), your agent is suspended automatically. The same applies to other agents that keep failing. Suspended agents are reviewed (see `agents.ts log <id>`).
 
 ## Network rules
 
