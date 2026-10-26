@@ -5,9 +5,11 @@ import type { Lang } from "./i18n.js";
  * Nox's own narration themes (F09-S08). They use the same persona mechanism as Marketplace agents
  * but have negative ids, no owner and no revenue share. Each theme exists once per language.
  */
-const THEMES: { id: number; keys: string[]; id_: [string, string, string, string[]]; en: [string, string, string, string[]] }[] = [
+/** `version` goes up whenever a theme's text changes (content.lock.json enforces it). */
+export const THEMES: { id: number; version: number; keys: string[]; id_: [string, string, string, string[]]; en: [string, string, string, string[]] }[] = [
   {
     id: -1,
+    version: 1,
     keys: ["horor", "horror"],
     id_: [
       "Horor Desa",
@@ -24,6 +26,7 @@ const THEMES: { id: number; keys: string[]; id_: [string, string, string, string
   },
   {
     id: -2,
+    version: 1,
     keys: ["fantasi", "fantasy"],
     id_: [
       "Fantasi",
@@ -40,6 +43,7 @@ const THEMES: { id: number; keys: string[]; id_: [string, string, string, string
   },
   {
     id: -3,
+    version: 1,
     keys: ["kantor", "office"],
     id_: [
       "Kantor",
