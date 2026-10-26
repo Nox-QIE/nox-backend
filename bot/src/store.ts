@@ -7,7 +7,8 @@ import type { AgentRecord, Persona } from "./agents.js";
 import type { LedgerNightReveal, LedgerRoleReveal } from "./chain/ledger.js";
 import type { Lang } from "./i18n.js";
 
-export type GameStatus = "running" | "ended" | "finalized" | "cancelled";
+/** "disputed" games keep their secrets (the evidence) and are never purged automatically. */
+export type GameStatus = "running" | "ended" | "finalized" | "cancelled" | "disputed";
 
 /** Everything needed to reveal a game later. Secret until revealed: salts expose roles. */
 export interface GameSecret {
@@ -44,7 +45,9 @@ export interface Store {
   saveGame(gameId: Hex, chatId: number, lang: Lang, secret: GameSecret): void;
   updateSecret(gameId: Hex, secret: GameSecret): void;
   markEnded(gameId: Hex, payload: FinalizePayload): void;
-  setStatus(gameId: Hex, status: "finalized" | "cancelled"): void;
+  setStatus(gameId: Hex, status: "finalized" | "cancelled" | "disputed"): void;
+  /** Group and language of a stored game (for messages after it left memory). */
+  gameInfo(gameId: Hex): { chatId: number; lang: Lang; status: GameStatus } | null;
   /** Games whose on-chain record is not settled yet (running or ended, not finalized/cancelled). */
   unsettledGames(): GameRecord[];
   /** Delete secrets of games settled before `beforeMs` (their roles are public on-chain by then). */
@@ -156,8 +159,13 @@ export class SqliteStore implements Store {
       .run(this.seal(payload), Date.now(), gameId);
   }
 
-  setStatus(gameId: Hex, status: "finalized" | "cancelled") {
+  setStatus(gameId: Hex, status: "finalized" | "cancelled" | "disputed") {
     this.db.prepare("UPDATE games SET status = ?, updated_at = ? WHERE game_id = ?").run(status, Date.now(), gameId);
+  }
+
+  gameInfo(gameId: Hex) {
+    const r = this.db.prepare("SELECT chat_id, lang, status FROM games WHERE game_id = ?").get(gameId) as { chat_id: number; lang: Lang; status: GameStatus } | undefined;
+    return r ? { chatId: r.chat_id, lang: r.lang, status: r.status } : null;
   }
 
   purgeSettledSecrets(beforeMs: number): number {

@@ -22,7 +22,7 @@ export interface LedgerNightReveal {
 export interface GameLedger {
   readonly enabled: boolean;
   addressOf(userId: number): Address | null;
-  /** NoxGame.Status of a game (0 None, 1 Lobby, 2 Running, 3 Finalized, 4 Cancelled), or null without a chain. */
+  /** NoxGame.Status of a game (0 None, 1 Lobby, 2 Running, 3 Finalized, 4 Cancelled, 5 Disputed), or null without a chain. */
   statusOf(gameId: Hex): Promise<number | null>;
   startGame(gameId: Hex, configHash: Hex, players: number[], rolesRoot: Hex): void;
   commitNightAction(gameId: Hex, round: number, userId: number, actionHash: Hex): void;

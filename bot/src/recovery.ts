@@ -6,6 +6,7 @@ import type { Store } from "./store.js";
 // NoxGame.Status
 const FINALIZED = 3;
 const CANCELLED = 4;
+const DISPUTED = 5;
 const NONE = 0;
 
 /**
@@ -25,6 +26,10 @@ export async function recoverGames(store: Store, ledger: GameLedger, messenger: 
       const status = await ledger.statusOf(g.gameId);
       if (status === FINALIZED) store.setStatus(g.gameId, "finalized");
       else if (status === CANCELLED || status === NONE) store.setStatus(g.gameId, "cancelled");
+      else if (status === DISPUTED) {
+        store.setStatus(g.gameId, "disputed");
+        log({ event: "game_disputed", gameId: g.gameId, reason: "reveal_timeout", detail: "found disputed on boot" });
+      }
       else if (g.finalize) {
         ledger.finalize(g.gameId, g.finalize.roles, g.finalize.nights, g.finalize.resultHash, g.finalize.winner);
         log({ event: "recovery_finalize", gameId: g.gameId });

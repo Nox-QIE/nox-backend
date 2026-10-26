@@ -147,6 +147,7 @@ export class EventStore {
       playerTxs: one("SELECT COUNT(DISTINCT tx_hash) FROM chain_events WHERE event IN ('PlayerJoined', 'NightActionCommitted', 'VoteCast')"),
       finishedGames: one("SELECT COUNT(*) FROM chain_events WHERE event = 'GameFinalized'"),
       cancelledGames: one("SELECT COUNT(*) FROM chain_events WHERE event = 'GameCancelled'"),
+      disputedGames: one("SELECT COUNT(*) FROM chain_events WHERE event = 'GameDisputed'"),
       credits: one("SELECT COALESCE(SUM(CAST(json_extract(args, '$.amount') AS INTEGER)), 0) FROM chain_events WHERE event = 'CreditsMinted'"),
       lastBlock: one("SELECT COALESCE(MAX(block), 0) FROM chain_events"),
     };
@@ -202,10 +203,12 @@ export class EventStore {
       `SELECT c.game_id, c.block, c.ts,
               (SELECT COUNT(*) FROM chain_events j WHERE j.game_id = c.game_id AND j.event = 'PlayerJoined') AS players,
               f.ts AS finalized_ts, CAST(json_extract(f.args, '$.winner') AS INTEGER) AS winner,
-              x.ts AS cancelled_ts, json_extract(x.args, '$.reason') AS reason
+              x.ts AS cancelled_ts, json_extract(x.args, '$.reason') AS reason,
+              d.ts AS disputed_ts, CAST(json_extract(d.args, '$.reason') AS INTEGER) AS dispute_code, json_extract(d.args, '$.detail') AS dispute_detail
        FROM chain_events c
        LEFT JOIN chain_events f ON f.game_id = c.game_id AND f.event = 'GameFinalized'
        LEFT JOIN chain_events x ON x.game_id = c.game_id AND x.event = 'GameCancelled'
+       LEFT JOIN chain_events d ON d.game_id = c.game_id AND d.event = 'GameDisputed'
        WHERE c.event = 'GameCreated' AND ${where}
        ORDER BY c.block DESC, c.log_index DESC LIMIT ?`,
       param,
@@ -219,7 +222,8 @@ export class EventStore {
     const games = this.rows(
       `SELECT j.game_id, j.block, j.ts, CAST(json_extract(r.args, '$.role') AS INTEGER) AS role,
               CAST(json_extract(f.args, '$.winner') AS INTEGER) AS winner,
-              (SELECT COUNT(*) FROM chain_events x WHERE x.game_id = j.game_id AND x.event = 'GameCancelled') AS cancelled
+              (SELECT COUNT(*) FROM chain_events x WHERE x.game_id = j.game_id AND x.event = 'GameCancelled') AS cancelled,
+              (SELECT COUNT(*) FROM chain_events d WHERE d.game_id = j.game_id AND d.event = 'GameDisputed') AS disputed
        FROM chain_events j
        LEFT JOIN chain_events r ON r.game_id = j.game_id AND r.event = 'RoleRevealed' AND r.account = j.account
        LEFT JOIN chain_events f ON f.game_id = j.game_id AND f.event = 'GameFinalized'
@@ -234,7 +238,7 @@ export class EventStore {
         block: Number(r.block),
         ts: Number(r.ts),
         role: role === null ? null : ROLE_NAMES[role] ?? null,
-        status: winner !== null ? "finalized" : Number(r.cancelled) ? "cancelled" : "running",
+        status: winner !== null ? "finalized" : Number(r.cancelled) ? "cancelled" : Number(r.disputed) ? "disputed" : "running",
         won: role !== null && winner !== null ? (role === 2 ? 2 : 1) === winner : null,
       };
     });
@@ -271,24 +275,28 @@ export interface GameSummary {
   block: number;
   ts: number;
   players: number;
-  status: "running" | "finalized" | "cancelled";
+  status: "running" | "finalized" | "cancelled" | "disputed";
   /** "village" | "wolves" once finalized. */
   winner: "village" | "wolves" | null;
   endedTs: number | null;
   cancelReason: string | null;
+  /** Set when the game ended as Disputed (NoxGame reason 1 = reveal mismatch, 2 = reveal timeout). */
+  dispute: { reason: "reveal_mismatch" | "reveal_timeout"; detail: string } | null;
 }
 
 function toGameSummary(r: Record<string, string | number | null>): GameSummary {
   const winner = r.winner === null ? null : Number(r.winner) === 2 ? "wolves" : "village";
+  const ended = r.finalized_ts ?? r.cancelled_ts ?? r.disputed_ts;
   return {
     gameId: r.game_id as Hex,
     block: Number(r.block),
     ts: Number(r.ts),
     players: Number(r.players),
-    status: r.finalized_ts !== null ? "finalized" : r.cancelled_ts !== null ? "cancelled" : "running",
+    status: r.finalized_ts !== null ? "finalized" : r.cancelled_ts !== null ? "cancelled" : r.disputed_ts !== null ? "disputed" : "running",
     winner,
-    endedTs: r.finalized_ts !== null ? Number(r.finalized_ts) : r.cancelled_ts !== null ? Number(r.cancelled_ts) : null,
+    endedTs: ended === null || ended === undefined ? null : Number(ended),
     cancelReason: (r.reason as string | null) ?? null,
+    dispute: r.disputed_ts !== null ? { reason: Number(r.dispute_code) === 2 ? "reveal_timeout" : "reveal_mismatch", detail: (r.dispute_detail as string | null) ?? "" } : null,
   };
 }
 

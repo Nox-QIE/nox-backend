@@ -39,6 +39,7 @@ type Dict = {
   yourRole: (role: string, wolves: string[]) => string;
   roleProof: (salt: string) => string;
   restartCancelled: string;
+  disputed: (url: string | null) => string;
   privacy: (url: string | null) => string;
   forgetAsk: string;
   forgetBtn: string;
@@ -85,6 +86,9 @@ export const T: Record<Lang, Dict> = {
       `Peranmu: <b>${role}</b>` + (wolves.length ? `\nSesama werewolf: ${wolves.join(", ")}\nPesan yang kamu kirim ke bot saat malam diteruskan ke sesama werewolf.` : ""),
     roleProof: (salt) => `🔐 Peranmu sudah dikunci di blockchain QIE sebelum dibagikan. Simpan kode ini untuk membuktikannya di akhir game:\n<code>${salt}</code>`,
     restartCancelled: "⚠️ Server Nox sempat restart, jadi game yang sedang berjalan di grup ini dibatalkan (juga di blockchain). Ketik /newgame untuk main lagi.",
+    disputed: (url) =>
+      `⚠️ Hasil game ini ditahan. Pemeriksaan akhir di blockchain QIE tidak lolos, jadi game dicatat terbuka sebagai <b>sengketa</b> dan tidak ada yang mendapat credits. Tim Nox sudah diberi tahu dan sedang memeriksanya.` +
+      (url ? `\nCatatan publik: ${url}` : ""),
     verifyLink: (url) => `🔍 Cek sendiri bahwa game ini adil (peran & aksi dibuka dan dihitung ulang di browsermu): <a href="${url}">${url}</a>`,
     gmLine: (n) => `🎙 Game Master: ${n}. Host bisa memilih lewat tombol di bawah.`,
     gmDefault: "🌙 Nox (bawaan)",
@@ -130,6 +134,9 @@ export const T: Record<Lang, Dict> = {
       `Your role: <b>${role}</b>` + (wolves.length ? `\nFellow werewolves: ${wolves.join(", ")}\nMessages you send to the bot at night are relayed to them.` : ""),
     roleProof: (salt) => `🔐 Your role was locked on the QIE blockchain before it was dealt. Keep this code to verify it after the game:\n<code>${salt}</code>`,
     restartCancelled: "⚠️ The Nox server restarted, so the game running in this group was cancelled (on-chain too). Type /newgame to play again.",
+    disputed: (url) =>
+      `⚠️ The result of this game is on hold. The final check on the QIE blockchain did not pass, so it was recorded publicly as <b>disputed</b> and nobody received credits. The Nox team has been alerted and is looking into it.` +
+      (url ? `\nPublic record: ${url}` : ""),
     verifyLink: (url) => `🔍 Check for yourself that this game was fair (roles and actions revealed and recomputed in your browser): <a href="${url}">${url}</a>`,
     gmLine: (n) => `🎙 Game Master: ${n}. The host can switch with the buttons below.`,
     gmDefault: "🌙 Nox (default)",

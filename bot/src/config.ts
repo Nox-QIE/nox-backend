@@ -46,6 +46,8 @@ export interface Config {
   dbPath: string;
   /** Public dashboard URL for proof links, e.g. https://nox.example (optional). */
   webUrl?: string;
+  /** Telegram user id that gets incident alerts by DM (it must have pressed Start). Optional. */
+  operatorChatId?: number;
   timings: Timings;
   gm: GmConfig;
   chain: ChainConfig;
@@ -59,6 +61,11 @@ const seconds = (env: NodeJS.ProcessEnv, key: string, fallbackMs: number) => {
   return n * 1000;
 };
 
+const chatId = (v: string) => {
+  if (!/^-?\d+$/.test(v)) throw new Error("NOX_OPERATOR_CHAT_ID must be a Telegram numeric id");
+  return Number(v);
+};
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const botToken = env.BOT_TOKEN;
   if (!botToken) throw new Error("BOT_TOKEN is not set (get one from @BotFather)");
@@ -66,6 +73,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     botToken,
     dbPath: env.NOX_DB_PATH || "data/nox.db",
     ...(env.NOX_WEB_URL ? { webUrl: env.NOX_WEB_URL } : {}),
+    ...(env.NOX_OPERATOR_CHAT_ID ? { operatorChatId: chatId(env.NOX_OPERATOR_CHAT_ID) } : {}),
     timings: {
       lobbyMs: seconds(env, "LOBBY_SECONDS", DEFAULT_TIMINGS.lobbyMs),
       nightMs: seconds(env, "NIGHT_SECONDS", DEFAULT_TIMINGS.nightMs),
