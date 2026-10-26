@@ -5,6 +5,7 @@ import { langFrom, T } from "./i18n.js";
 import { noLedger, type GameLedger } from "./chain/ledger.js";
 import { chainFor, ViemLedger, type PlayerReward, type ViemLedgerOptions } from "./chain/viem-ledger.js";
 import { qie, TreasuryWatch } from "./treasury.js";
+import { RateLimiter, rateLimitMiddleware } from "./ratelimit.js";
 import { PlayerWallets } from "./chain/wallets.js";
 import type { ChainConfig, Config, GmConfig } from "./config.js";
 import { recoverGames } from "./recovery.js";
@@ -182,9 +183,11 @@ export async function sendRewardDms(a: { messenger: Messenger; store: Store; gam
 }
 
 /** Wire Telegram updates to the registry. Nox stays a regular bot: no Mini App / Web App buttons. */
-export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, timings, gm, chain }: Config) {
+export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, timings, gm, chain, rateLimit }: Config) {
   const bot = new Bot(botToken);
   await bot.init();
+  // First middleware: refused updates never reach the game.
+  bot.use(rateLimitMiddleware(new RateLimiter(rateLimit), (ctx) => T[langFrom(ctx.from?.language_code)].slowDown, logLine));
   const messenger = telegramMessenger(bot);
   const store = new SqliteStore(dbPath, chain.walletSecret ? storeKey(chain.walletSecret) : null);
   const ledger = buildLedger(

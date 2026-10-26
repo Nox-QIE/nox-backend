@@ -61,6 +61,7 @@ type Dict = {
   voteOk: (target: string) => string;
   voted: (voter: string, target: string) => string;
   noPermission: string;
+  slowDown: string;
   stale: string;
 };
 
@@ -122,6 +123,7 @@ export const T: Record<Lang, Dict> = {
     voteOk: (t) => `Vote tercatat: ${t}.`,
     voted: (v, t) => `${v} memilih ${t}.`,
     noPermission: "Kamu tidak bisa melakukan itu sekarang.",
+    slowDown: "Pelan-pelan dulu ya, tunggu beberapa detik.",
     stale: "Tombol ini sudah tidak berlaku.",
   },
   en: {
@@ -181,6 +183,7 @@ export const T: Record<Lang, Dict> = {
     voteOk: (t) => `Vote recorded: ${t}.`,
     voted: (v, t) => `${v} voted for ${t}.`,
     noPermission: "You can't do that right now.",
+    slowDown: "Slow down a little and try again in a few seconds.",
     stale: "This button has expired.",
   },
 };

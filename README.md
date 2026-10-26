@@ -48,3 +48,9 @@ GET/HEAD saja, CORS `*`, `ETag` = blok terindeks (304 sampai indeks maju), `Cach
 | `NOX_API_HOST` | `127.0.0.1` | Alamat bind |
 | `NOX_API_TRUST_PROXY` | – | `1` = pakai `X-Forwarded-For` (hanya di belakang proxy) |
 | `NOX_API_RATE_PER_MINUTE` | 120 | Batas request per IP per menit |
+
+## Menjalankan bot di server (webhook)
+
+Lokal cukup long polling (`NOX_WEBHOOK_URL` kosong). Di server isi `NOX_WEBHOOK_URL` (URL https publik bot) dan `NOX_WEBHOOK_SECRET` (`openssl rand -hex 32`). Bot mendengarkan di `NOX_WEBHOOK_HOST:NOX_WEBHOOK_PORT` (default `127.0.0.1:8080`) pada path `/telegram/webhook` di belakang reverse proxy https, lalu memanggil `setWebhook` dengan secret itu. Update tanpa header `X-Telegram-Bot-Api-Secret-Token` yang cocok ditolak 401. `GET /healthz` menjawab `ok`. Kembali ke long polling cukup dengan mengosongkan `NOX_WEBHOOK_URL`: webhook dihapus otomatis saat start.
+
+Setiap pengguna dibatasi `NOX_RATE_LIMIT` (default 20 update per 10 detik) untuk perintah, tombol, dan pesan pribadi; obrolan grup biasa tidak dibatasi.

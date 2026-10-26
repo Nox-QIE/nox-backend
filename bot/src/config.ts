@@ -1,5 +1,6 @@
 import type { GmProvider } from "./gm/model.js";
 import { DEFAULT_TIMINGS, type Timings } from "./ports.js";
+import { parseRateLimit } from "./ratelimit.js";
 
 export interface GmPoolEntryConfig {
   /** "anthropic" = Claude API with the SDK's own credentials; "oxion" = Oxion AI gateway. */
@@ -50,6 +51,10 @@ export interface Config {
   webUrl?: string;
   /** Telegram user id that gets incident alerts by DM (it must have pressed Start). Optional. */
   operatorChatId?: number;
+  /** Webhook mode when set; long polling otherwise. */
+  webhook?: { url: string; secret: string; port: number; host: string };
+  /** Per-user limit on commands, button taps and private messages. */
+  rateLimit: { limit: number; windowMs: number };
   timings: Timings;
   gm: GmConfig;
   chain: ChainConfig;
@@ -68,6 +73,17 @@ const chatId = (v: string) => {
   return Number(v);
 };
 
+function loadWebhook(env: NodeJS.ProcessEnv): NonNullable<Config["webhook"]> {
+  const url = env.NOX_WEBHOOK_URL!.replace(/\/+$/, "");
+  if (!/^https:\/\/[^\s/]+(\/[^\s]*)?$/.test(url)) throw new Error("NOX_WEBHOOK_URL must be the public https:// base URL of this bot");
+  const secret = env.NOX_WEBHOOK_SECRET ?? "";
+  // Telegram allows 1-256 of A-Z a-z 0-9 _ -; require enough length to be unguessable.
+  if (!/^[A-Za-z0-9_-]{32,256}$/.test(secret)) throw new Error("NOX_WEBHOOK_SECRET must be 32-256 characters of A-Z a-z 0-9 _ - (openssl rand -hex 32)");
+  const port = Number(env.NOX_WEBHOOK_PORT || 8080);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("NOX_WEBHOOK_PORT must be a port number");
+  return { url, secret, port, host: env.NOX_WEBHOOK_HOST || "127.0.0.1" };
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const botToken = env.BOT_TOKEN;
   if (!botToken) throw new Error("BOT_TOKEN is not set (get one from @BotFather)");
@@ -76,6 +92,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     dbPath: env.NOX_DB_PATH || "data/nox.db",
     ...(env.NOX_WEB_URL ? { webUrl: env.NOX_WEB_URL } : {}),
     ...(env.NOX_OPERATOR_CHAT_ID ? { operatorChatId: chatId(env.NOX_OPERATOR_CHAT_ID) } : {}),
+    ...(env.NOX_WEBHOOK_URL ? { webhook: loadWebhook(env) } : {}),
+    rateLimit: parseRateLimit(env.NOX_RATE_LIMIT || "20/10"),
     timings: {
       lobbyMs: seconds(env, "LOBBY_SECONDS", DEFAULT_TIMINGS.lobbyMs),
       nightMs: seconds(env, "NIGHT_SECONDS", DEFAULT_TIMINGS.nightMs),

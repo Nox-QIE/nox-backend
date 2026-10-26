@@ -1,5 +1,6 @@
 import { loadConfig } from "./config.js";
 import { createNoxBot } from "./telegram.js";
+import { WEBHOOK_PATH, webhookServer } from "./webhook.js";
 
 const config = loadConfig();
 const { bot } = await createNoxBot(config);
@@ -11,9 +12,23 @@ await bot.api.setMyCommands([
   { command: "forget", description: "Delete your off-chain data (in a private chat with the bot)" },
 ]);
 
-const stop = () => void bot.stop();
-process.once("SIGINT", stop);
-process.once("SIGTERM", stop);
+const allowed_updates = ["message", "callback_query"] as const;
+const gmLabel = config.gm.mode === "llm" ? config.gm.pool.map((e) => `${e.provider}:${e.model}@${e.weight}`).join(", ") : "template";
 
-console.log(`Nox bot @${bot.botInfo.username} running (long polling, chain: ${config.chain.network}, GM: ${config.gm.mode === "llm" ? config.gm.pool.map((e) => `${e.provider}:${e.model}@${e.weight}`).join(", ") : "template"})`);
-await bot.start({ allowed_updates: ["message", "callback_query"] });
+if (config.webhook) {
+  const { url, secret, port, host } = config.webhook;
+  const server = webhookServer(bot, secret);
+  await new Promise<void>((resolve) => server.listen(port, host, resolve));
+  await bot.api.setWebhook(`${url}${WEBHOOK_PATH}`, { secret_token: secret, allowed_updates: [...allowed_updates] });
+  const stop = () => server.close();
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  console.log(`Nox bot @${bot.botInfo.username} running (webhook ${url}${WEBHOOK_PATH} → ${host}:${port}, chain: ${config.chain.network}, GM: ${gmLabel})`);
+} else {
+  const stop = () => void bot.stop();
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  console.log(`Nox bot @${bot.botInfo.username} running (long polling, chain: ${config.chain.network}, GM: ${gmLabel})`);
+  // bot.start removes any webhook first, so switching back from webhook mode just works.
+  await bot.start({ allowed_updates: [...allowed_updates] });
+}
