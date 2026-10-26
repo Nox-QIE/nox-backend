@@ -55,23 +55,25 @@ export class Registry {
 
   /**
    * `agentId` (e.g. a theme from "/newgame horor") is preselected in the lobby when available;
-   * `scenario` starts a Scam Shield game ("/newgame scamshield").
+   * `scenario` starts a Scam Shield game ("/newgame scamshield"); `prepaid` is a booked Game Night,
+   * already paid by the client, so its host needs no Host Pass for themes, agents or a big lobby.
    */
-  async create(chatId: number, hostId: number, hostName: string, lang: Lang, opts: { agentId?: number; scenario?: Scenario } = {}): Promise<Reply> {
+  async create(chatId: number, hostId: number, hostName: string, lang: Lang, opts: { agentId?: number; scenario?: Scenario; prepaid?: boolean } = {}): Promise<Reply> {
     const t = T[lang];
     if (this.byChat.has(chatId)) return { ok: false, text: t.gameExists };
     if (this.byUser.has(hostId)) return { ok: false, text: t.inOtherGame };
     // This reply goes to the group, so it must not echo a raw display name.
     if (!this.startedUsers.has(hostId)) return { ok: false, text: t.needStart(esc(safeName(hostName, 1, lang)), this.deps.botUsername) };
     // A theme picked with /newgame is a premium Game Master too.
-    if (opts.agentId !== undefined && this.deps.hostPass && !(await this.deps.hostPass(hostId))) return { ok: false, text: t.passNeeded };
+    if (!opts.prepaid && opts.agentId !== undefined && this.deps.hostPass && !(await this.deps.hostPass(hostId))) return { ok: false, text: t.passNeeded };
+    const { hostPass, ...deps } = this.deps;
     const room = new GameRoom(
       this.newId(),
       chatId,
       hostId,
       hostName,
       lang,
-      { ...this.deps, onClosed: (r) => this.forget(r) },
+      { ...deps, ...(hostPass && !opts.prepaid ? { hostPass } : {}), onClosed: (r) => this.forget(r) },
       opts.scenario ?? null,
     );
     this.rooms.set(room.id, room);

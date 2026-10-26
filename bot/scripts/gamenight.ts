@@ -1,16 +1,20 @@
 /**
  * Game Night bookings (F04): quote a night for a client, check its payment on chain, list, cancel.
  * Needs no key: the client pays NoxPayments.payGameNight from their own wallet, and `sync` reads the
- * GameNightPaid event from the event index (`npm run indexer` keeps it current).
+ * GameNightPaid event from the event index (`npm run indexer` keeps it current). Once paid, the running
+ * bot announces the night in the group and opens it at the booked time (src/gamenight.ts); `sync`
+ * marks it played when a game finished in that group around that time.
  *   npm run gamenight -- quote <chat-id|-> <start, e.g. 2026-11-07T19:00+07:00> <price> "<client>"
  *       [--token 0x… --decimals 6] [--agent <id>] [--theme horor] [--lang id|en] [--contact "@handle"]
- *   npm run gamenight -- list | show <booking> | sync | cancel <booking> "<reason>" | forget-contact <booking>
+ *   npm run gamenight -- list | show <booking> | sync | set-chat <booking> <chat-id> | cancel <booking> "<reason>" | forget-contact <booking>
  */
 import { parseUnits, type Address } from "viem";
 import { checkPayment, NATIVE, newBookingId, paymentInstructions, type Booking } from "../src/bookings.js";
 import { EventStore } from "../src/chain/indexer.js";
 import { AGENT_TERMS, isAddress } from "../src/agents.js";
 import { SqliteStore } from "../src/store.js";
+import { OPEN_GRACE_MS } from "../src/gamenight.js";
+import { scenarioFrom } from "../src/scenarios.js";
 import { themeIdFrom } from "../src/themes.js";
 
 const argv = process.argv.slice(2);
@@ -47,7 +51,7 @@ switch (cmd) {
     const price = parseUnits(c, decimals);
     if (price <= 0n) throw new Error("price must be above 0");
     const theme = flag("theme") ?? null;
-    if (theme !== null && themeIdFrom(theme) === null) throw new Error(`unknown theme ${theme}`);
+    if (theme !== null && themeIdFrom(theme) === null && !scenarioFrom(theme)) throw new Error(`unknown theme or scenario ${theme}`);
     const lang = flag("lang") ?? "id";
     if (lang !== "id" && lang !== "en") throw new Error("--lang must be id or en");
     let agentId: number | null = null;
@@ -89,7 +93,7 @@ switch (cmd) {
     break;
   case "show": {
     const g = find(a);
-    console.log(`${line(g)}\n  id ${g.id}\n  price ${g.price} (${g.decimals} decimals) token ${g.token}${g.contact ? `\n  contact ${g.contact}` : ""}${g.paidTx ? `\n  paid in ${g.paidTx}` : ""}${g.note ? `\n  note: ${g.note}` : ""}`);
+    console.log(`${line(g)}\n  id ${g.id}\n  price ${g.price} (${g.decimals} decimals) token ${g.token}${g.contact ? `\n  contact ${g.contact}` : ""}${g.paidTx ? `\n  paid in ${g.paidTx}` : ""}${store.bookingNotices(g.id).length ? `\n  notices sent: ${store.bookingNotices(g.id).join(", ")}` : ""}${g.note ? `\n  note: ${g.note}` : ""}`);
     if (g.status === "quoted" && payments) console.log(`\n${paymentInstructions(g, payments, g.lang)}`);
     break;
   }
@@ -109,6 +113,13 @@ switch (cmd) {
       }
     }
     index.close();
+    // Paid nights whose group finished a game between 1 hour before and the end of the open window.
+    for (const g of store.listBookings().filter((x) => x.status === "paid" && x.chatId !== null && Date.now() >= x.startsAt)) {
+      if (store.finishedGamesOfChat(g.chatId!, g.startsAt - 3600_000, g.startsAt + OPEN_GRACE_MS + 3 * 3600_000).length) {
+        store.updateBooking(g.id, { status: "played" });
+        console.log(line({ ...g, status: "played" }));
+      }
+    }
     break;
   }
   case "cancel": {
@@ -118,6 +129,13 @@ switch (cmd) {
     console.log(`${g.id} cancelled: ${b.trim()}${g.status === "paid" ? "\nIt was paid on chain: refund the client from the treasury by hand." : ""}`);
     break;
   }
+  case "set-chat": {
+    const g = find(a);
+    if (!b || !Number.isInteger(Number(b))) throw new Error("usage: set-chat <booking> <telegram-chat-id>");
+    store.updateBooking(g.id, { chatId: Number(b) });
+    console.log(`${g.id}: group ${b}.`);
+    break;
+  }
   case "forget-contact": {
     const g = find(a);
     store.updateBooking(g.id, { contact: null });
@@ -125,6 +143,6 @@ switch (cmd) {
     break;
   }
   default:
-    console.log("commands: quote | list | show <booking> | sync | cancel <booking> <reason> | forget-contact <booking>");
+    console.log("commands: quote | list | show <booking> | sync | set-chat <booking> <chat-id> | cancel <booking> <reason> | forget-contact <booking>");
 }
 store.close();

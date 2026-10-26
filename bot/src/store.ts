@@ -94,6 +94,9 @@ export interface Store {
   getBooking(id: string): Booking | null;
   listBookings(): Booking[];
   updateBooking(id: string, u: { status?: BookingStatus; paidTx?: string | null; note?: string | null; chatId?: number | null; contact?: string | null }): void;
+  /** Group notices already sent for a booking ("24h", "1h", "open"), F04-S06. */
+  bookingNotices(id: string): string[];
+  addBookingNotice(id: string, notice: string): void;
   recordOperatorBalance(wei: bigint): void;
   /** AI use per finished game (F09-D05). */
   recordGmGame(g: { gameId: Hex | null; agentId: number | null; players: number; report: NarratorReport }): void;
@@ -244,7 +247,8 @@ export class SqliteStore implements Store {
         status TEXT NOT NULL,
         paid_tx TEXT,
         note TEXT,
-        created_at INTEGER NOT NULL
+        created_at INTEGER NOT NULL,
+        notices TEXT NOT NULL DEFAULT ''
       );
       CREATE TABLE IF NOT EXISTS operator_balances (at INTEGER PRIMARY KEY, wei TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS gm_games (
@@ -473,6 +477,16 @@ export class SqliteStore implements Store {
     this.db
       .prepare(`UPDATE bookings SET ${set.map(([c]) => `${c} = ?`).join(", ")} WHERE lower(id) = ?`)
       .run(...set.map(([, k]) => u[k] as string | number | null), id.toLowerCase());
+  }
+
+  bookingNotices(id: string): string[] {
+    const r = this.db.prepare("SELECT notices FROM bookings WHERE lower(id) = ?").get(id.toLowerCase()) as { notices: string } | undefined;
+    return r?.notices ? r.notices.split(",") : [];
+  }
+
+  addBookingNotice(id: string, notice: string) {
+    const all = [...new Set([...this.bookingNotices(id), notice])].join(",");
+    this.db.prepare("UPDATE bookings SET notices = ? WHERE lower(id) = ?").run(all, id.toLowerCase());
   }
 
   forgetUser(userId: number) {

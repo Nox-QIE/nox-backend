@@ -5,6 +5,7 @@ import { esc, langFrom, T, type Lang, type PlayerStatsLite } from "./i18n.js";
 import { noLedger, type GameLedger } from "./chain/ledger.js";
 import { chainFor, rpcTransport, ViemLedger, type PlayerReward, type ViemLedgerOptions } from "./chain/viem-ledger.js";
 import { PassReader, type PassClient } from "./chain/passes.js";
+import { GameNights } from "./gamenight.js";
 import { Practice, PRACTICE, PRACTICE_PAYLOADS, practiceLink } from "./practice.js";
 import { AlertMonitor } from "./alerts.js";
 import { qie, TreasuryWatch } from "./treasury.js";
@@ -343,6 +344,11 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
     await ctx.reply(text, { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
   });
   const practice = new Practice({ botUsername: bot.botInfo.username, counts: store });
+  // Booked Game Nights (F04-S06): announcements and the open call in the client's group, every minute.
+  const gameNights = new GameNights({ store, messenger, botUsername: bot.botInfo.username, llm: gm.mode === "llm", log: logLine });
+  const nightsTick = () => void gameNights.tick().catch((e) => logLine({ event: "gamenight_error", error: e instanceof Error ? e.message : String(e) }));
+  setInterval(nightsTick, 60_000).unref();
+  nightsTick();
   bot.command(["latihan", "practice"], async (ctx) => {
     const lang = langFrom(ctx.from?.language_code);
     await ctx.reply(PRACTICE[lang].groupLink(practiceLink(bot.botInfo.username, lang)), { link_preview_options: { is_disabled: true } });
@@ -386,6 +392,7 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
   });
 
   // Callback data: j:<room> | s:<room> | a:<room>:<agentId> | n:<room>:<round>:<target> | v:<room>:<round>:<target>
+  // | q:<item>:<s|k> (practice) | f:yes (forget) | g:<booking> (open a booked Game Night)
   bot.on("callback_query:data", async (ctx) => {
     const [kind, roomId, roundStr, target] = ctx.callbackQuery.data.split(":");
     if (kind === "q") {
@@ -394,6 +401,11 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
       await ctx.answerCallbackQuery();
       await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() }).catch(() => undefined); // no second tap on an answered item
       await ctx.reply(next.text, opts(next.keyboard));
+      return;
+    }
+    if (kind === "g") {
+      const r = ctx.chat ? await gameNights.claim(registry, roomId ?? "", ctx.chat.id, ctx.from.id, displayName(ctx.from)) : { ok: false, text: T.en.stale };
+      await ctx.answerCallbackQuery(r.text ? { text: stripTags(r.text) } : undefined);
       return;
     }
     if (kind === "f") {
