@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Address, Hex } from "viem";
 import type { EventStore } from "./chain/indexer.js";
+import { buildReport } from "./report.js";
 
 /**
  * Public read-only API (F12-D05) over the event index. Everything it serves is already public on
@@ -78,6 +79,18 @@ export function createApi(o: ApiOptions): Server {
         const days = intParam(url, "days", 30, 1, 90);
         const today = Math.floor(now() / 86_400_000) * 86_400;
         return { days: store.dailySigners(today - (days - 1) * 86_400) };
+      }
+      case "engagement": {
+        // The Game Night report's metrics over every group (docs/metrics.md): the last `weeks` ISO
+        // weeks, from Monday 00:00 UTC to now. Counts only; small weekly counts are hidden.
+        if (id) break;
+        const weeks = intParam(url, "weeks", 8, 1, 26);
+        const day = Math.floor(now() / 86_400_000);
+        const monday = day - ((day + 3) % 7); // 1 Jan 1970 was a Thursday
+        const from = (monday - 7 * (weeks - 1)) * 86_400;
+        const to = Math.floor(now() / 1000) + 1;
+        const iso = (ts: number) => new Date(ts * 1000).toISOString().slice(0, 10);
+        return buildReport({ group: "all", from: iso(from), to: iso(to - 1), games: store.finalizedGames(from, to) });
       }
       case "games": {
         if (!id) {

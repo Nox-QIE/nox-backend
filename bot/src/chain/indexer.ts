@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { decodeEventLog, type Abi, type Address, type Hex } from "viem";
+import type { ReportGame } from "../report.js";
 
 /**
  * Event indexer (F12-S01, D15). Polls eth_getLogs for every Nox contract in one call per chunk
@@ -438,6 +439,17 @@ export class EventStore {
       this.rows("SELECT COALESCE(SUM(CAST(json_extract(args, '$.amount') AS INTEGER)), 0) AS n FROM chain_events WHERE game_id = ? AND event = 'CreditsMinted'", id)[0]?.n ?? 0,
     );
     return { players, createdTs: g.ts, endedTs: g.endedTs, status: g.status, rounds, credits };
+  }
+
+  /**
+   * Every game finalized in [fromTs, toTs), in the shape the engagement report counts, so the public
+   * engagement numbers and a client's Game Night report share one definition (F12-D04).
+   */
+  finalizedGames(fromTs: number, toTs: number): ReportGame[] {
+    return this.rows("SELECT game_id FROM chain_events WHERE event = 'GameFinalized' AND ts >= ? AND ts < ? ORDER BY ts, block, log_index", fromTs, toTs).flatMap((r) => {
+      const d = this.gameDetail(r.game_id as Hex);
+      return d && d.endedTs !== null ? [{ gameId: r.game_id as Hex, players: d.players, createdTs: d.createdTs, endedTs: d.endedTs, rounds: d.rounds, credits: d.credits }] : [];
+    });
   }
 
   /** One player's history, all from public events: joins, revealed roles, results, credits, signed txs. */
