@@ -4,6 +4,7 @@
  * player ids 990001-990005, whose wallets are derived from NOX_WALLET_SECRET and funded by the
  * gas drip. Spends a little real QIE on testnet/mainnet.
  *   npm run sim:game
+ *   npm run sim:game -- --scamshield   (Scam Shield mode: a group win awards Scam Spotter on NoxBadges)
  */
 import { installLogRedaction, secretsFrom } from "../src/redact.js";
 import { buildLedger } from "../src/telegram.js";
@@ -12,6 +13,9 @@ import type { PlayerReward, ViemLedger } from "../src/chain/viem-ledger.js";
 import { TemplateNarrator } from "../src/narrator.js";
 import type { Messenger, Scheduler } from "../src/ports.js";
 import { Registry } from "../src/registry.js";
+import { TASK_SCAM } from "../src/scenarios.js";
+import { NoxBadgesAbi } from "../src/chain/contracts.js";
+import { keccak256, toHex } from "viem";
 import { SqliteStore } from "../src/store.js";
 import { gasReport, qie } from "../src/treasury.js";
 
@@ -53,7 +57,8 @@ const registry = new Registry({
 });
 const users = [990001, 990002, 990003, 990004, 990005];
 users.forEach((u) => registry.markStarted(u));
-await registry.create(-990, users[0]!, "Sim Host", "en");
+const scamShield = process.argv.includes("--scamshield");
+await registry.create(-990, users[0]!, "Sim Host", "en", scamShield ? { scenario: TASK_SCAM } : {});
 const room = registry.roomOfChat(-990)!;
 for (const u of users.slice(1)) await registry.join(room.id, u, `Sim ${u}`);
 
@@ -76,6 +81,14 @@ const drips = logs.filter((l) => l.event === "gas_drip").length;
 console.log(`on-chain status ${status === 3 ? "Finalized" : status} after ${((Date.now() - t0) / 1000).toFixed(0)} s; gas drips ${drips}; chain errors ${logs.filter((l) => l.event === "chain_error").length}`);
 console.log(`gameId ${room.gameId}`);
 console.log(`players ${users.map((u) => ledger.addressOf(u)).join(", ")}`);
+for (const l of logs.filter((x) => String(x.event).startsWith("badge_"))) console.log(`badge ${JSON.stringify(l)}`);
+if (scamShield && chain.badgesAddress) {
+  const spotter = keccak256(toHex("SCAM_SPOTTER"));
+  for (const u of users) {
+    const n = await ledger.publicClient.readContract({ address: chain.badgesAddress, abi: NoxBadgesAbi, functionName: "countOf", args: [ledger.addressOf(u), spotter] });
+    console.log(`Scam Spotter ${ledger.addressOf(u)}: ${n}`);
+  }
+}
 for (const r of rewards) console.log(`credits ${ledger.addressOf(r.userId)}: ${r.total} = base ${r.base} + role ${r.role} + vote ${r.vote} + streak ${r.streak} (streak ${r.streakDays} day(s))`);
 for (const r of gasReport(store.txsOfGame(room.gameId!).map((t) => ({ ...t, at: Date.now() }))))
   console.log(`gas ${r.step}: ${r.txs} tx, ${r.gasUsed} gas, fee ${qie(r.feeWei, 12)} QIE${r.failed ? `, ${r.failed} not successful` : ""}`);
