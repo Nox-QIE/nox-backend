@@ -1,14 +1,18 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import cors from "@fastify/cors";
+import rateLimit from "@fastify/rate-limit";
+import swagger from "@fastify/swagger";
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import type { Address, Hex } from "viem";
 import type { EventStore } from "./chain/indexer.js";
 import { verifyToken, sessionToken, SESSION_TTL_S } from "./login.js";
 import { buildReport } from "./report.js";
 
 /**
- * Public read-only API (F12-D05) over the event index. Everything it serves is already public on
- * chain; the API only saves clients from scanning logs themselves. GET only, JSON, CORS open. With a
- * login secret it also takes POST /v1/login (a one-time token from the bot, for a session) and
- * GET /v1/me (who the session belongs to), NOX-APP-14; those are never cached.
+ * Public read-only API (F12-D05) over the event index, on Fastify. Everything it serves is already
+ * public on chain; the API only saves clients from scanning logs themselves. GET only, JSON, CORS
+ * open, every route described in OpenAPI at /v1/openapi.json. With a login secret it also takes
+ * POST /v1/login (a one-time token from the bot, for a session) and GET /v1/me (who the session
+ * belongs to), NOX-APP-14; those are never cached.
  * Responses are cached per URL until the index moves to a new block, and each IP gets a fixed
  * number of requests per minute.
  */
@@ -28,217 +32,246 @@ export interface ApiOptions {
 
 class HttpError extends Error {
   constructor(
-    readonly status: number,
+    readonly statusCode: number,
     message: string,
   ) {
     super(message);
   }
 }
 
-const GAME_ID = /^0x[0-9a-fA-F]{64}$/;
-const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+const GAME_ID = "^0x[0-9a-fA-F]{64}$";
+const ADDRESS = "^0x[0-9a-fA-F]{40}$";
+const SEASON = "^\\d{4}-(0[1-9]|1[0-2])$";
 const MAX_CACHE = 500;
-const MAX_CLIENTS = 10_000;
 
-function intParam(url: URL, key: string, fallback: number, min: number, max: number): number {
-  const v = url.searchParams.get(key);
-  if (v === null) return fallback;
-  const n = Number(v);
-  if (!Number.isInteger(n) || n < min || n > max) throw new HttpError(400, `${key} must be a whole number from ${min} to ${max}`);
-  return n;
-}
+const int = (minimum: number, maximum: number, def?: number, description?: string) => ({
+  type: "integer",
+  minimum,
+  maximum,
+  ...(def === undefined ? {} : { default: def }),
+  ...(description ? { description } : {}),
+});
+const query = (properties: Record<string, object>) => ({ type: "object", properties, additionalProperties: false });
+const param = (name: string, pattern: string, description: string) => ({
+  type: "object",
+  required: [name],
+  properties: { [name]: { type: "string", pattern, description } },
+});
+const str = <T extends object>(x: T) => Object.fromEntries(Object.entries(x).map(([k, v]) => [k, typeof v === "bigint" ? v.toString() : v]));
 
-export function createApi(o: ApiOptions): Server {
+export async function createApi(o: ApiOptions): Promise<FastifyInstance> {
   const now = o.now ?? Date.now;
-  const rate = o.ratePerMinute ?? 120;
-  const cache = new Map<string, { block: number; body: string }>();
-  const clients = new Map<string, { windowStart: number; count: number }>();
-
-  const route = (url: URL): unknown => {
-    const { store } = o;
-    const parts = url.pathname.replace(/\/+$/, "").split("/").filter(Boolean);
-    if (parts[0] !== "v1") throw new HttpError(404, "not found");
-    const [, resource, id, ...rest] = parts;
-    if (rest.length) throw new HttpError(404, "not found");
-    switch (resource) {
-      case "health":
-        return {
-          ok: true,
-          network: o.network,
-          chainId: o.chainId,
-          indexedBlock: store.indexedBlock(),
-          reconciliation: store.lastReconciliation(),
-          paymentsReconciliation: store.lastPaymentReconciliation(),
-        };
-      case "stats":
-        if (id) break;
-        return { ...store.stats(), indexedBlock: store.indexedBlock() };
-      case "leaderboard": {
-        if (id) break;
-        const season = url.searchParams.get("season") ?? undefined;
-        if (season !== undefined && !/^\d{4}-(0[1-9]|1[0-2])$/.test(season)) throw new HttpError(400, "season must look like 2026-10");
-        return { season: season ?? null, players: store.leaderboard(intParam(url, "limit", 50, 1, 200), season) };
-      }
-      case "daily": {
-        if (id) break;
-        const days = intParam(url, "days", 30, 1, 90);
-        const today = Math.floor(now() / 86_400_000) * 86_400;
-        return { days: store.dailySigners(today - (days - 1) * 86_400) };
-      }
-      case "engagement": {
-        // The Game Night report's metrics over every group (docs/metrics.md): the last `weeks` ISO
-        // weeks, from Monday 00:00 UTC to now. Counts only; small weekly counts are hidden.
-        if (id) break;
-        const weeks = intParam(url, "weeks", 8, 1, 26);
-        const day = Math.floor(now() / 86_400_000);
-        const monday = day - ((day + 3) % 7); // 1 Jan 1970 was a Thursday
-        const from = (monday - 7 * (weeks - 1)) * 86_400;
-        const to = Math.floor(now() / 1000) + 1;
-        const iso = (ts: number) => new Date(ts * 1000).toISOString().slice(0, 10);
-        return buildReport({ group: "all", from: iso(from), to: iso(to - 1), games: store.finalizedGames(from, to) });
-      }
-      case "games": {
-        if (!id) {
-          const before = url.searchParams.has("before") ? intParam(url, "before", 0, 1, Number.MAX_SAFE_INTEGER) : undefined;
-          return { games: store.games(intParam(url, "limit", 20, 1, 100), before) };
-        }
-        if (!GAME_ID.test(id)) throw new HttpError(400, "game id must be 0x + 64 hex characters");
-        const game = store.game(id as Hex);
-        if (!game) throw new HttpError(404, "game not indexed (yet)");
-        return { game, events: store.eventsOfGame(id as Hex) };
-      }
-      case "agents": {
-        const str = <T extends object>(x: T) => Object.fromEntries(Object.entries(x).map(([k, v]) => [k, typeof v === "bigint" ? v.toString() : v]));
-        // Agent Marketplace revenue, public on chain: per agent, owner and token (amounts in wei, as strings).
-        if (id === "revenue") {
-          const { agents, owners } = store.paymentLedger();
-          return { agents: agents.map(str), owners: owners.map(str) };
-        }
-        // D16 from NoxAgentRegistry (F18-D01): all agents, or one by its on-chain id.
-        const all = store.agents().map((x) => ({ ...x, revenue: x.revenue.map(str) }));
-        if (!id) return { agents: all };
-        if (!/^\d{1,9}$/.test(id)) throw new HttpError(400, "agent id must be a whole number");
-        const one = all.find((x) => x.agentId === Number(id));
-        if (!one) throw new HttpError(404, "agent not registered (or not indexed yet)");
-        return one;
-      }
-      case "players":
-        if (!id || !ADDRESS.test(id)) throw new HttpError(400, "address must be 0x + 40 hex characters");
-        // D9: the wallet's pass purchases, on chain or rupiah (amounts in wei as strings; rupiah amounts stay private).
-        return {
-          ...store.player(id as Address),
-          passes: store.passPurchases(id as Address, Math.floor(now() / 1000)).map((p) => ({ ...p, amount: p.amount === null ? null : p.amount.toString() })),
-        };
-    }
-    throw new HttpError(404, "not found");
-  };
-
-  const clientIp = (req: IncomingMessage) => {
-    const fwd = o.trustProxy ? String(req.headers["x-forwarded-for"] ?? "").split(",")[0]?.trim() : "";
-    return fwd || req.socket.remoteAddress || "unknown";
-  };
-
-  const allow = (ip: string): boolean => {
-    const t = now();
-    const c = clients.get(ip);
-    if (!c || t - c.windowStart >= 60_000) {
-      if (clients.size >= MAX_CLIENTS) for (const [k, v] of clients) if (t - v.windowStart >= 60_000) clients.delete(k);
-      clients.set(ip, { windowStart: t, count: 1 });
-      return true;
-    }
-    c.count++;
-    return c.count <= rate;
-  };
-
-  const send = (res: ServerResponse, status: number, body: string, extra: Record<string, string> = {}) => {
-    res.writeHead(status, {
-      "content-type": "application/json; charset=utf-8",
-      "access-control-allow-origin": "*",
-      "x-content-type-options": "nosniff",
-      ...extra,
-    });
-    res.end(res.req.method === "HEAD" ? undefined : body);
-  };
-
   const secret = o.loginSecret ?? null;
   const nowS = () => Math.floor(now() / 1000);
-  const noStore = { "cache-control": "no-store" };
+  const cache = new Map<string, { block: number; body: string }>();
+  const { store } = o;
 
-  /** POST /v1/login {token}: spend the bot's one-time token, answer with a session for that wallet. */
-  const login = (req: IncomingMessage, res: ServerResponse) => {
-    let raw = "";
-    let tooBig = false;
-    req.on("data", (chunk: Buffer) => {
-      raw += chunk.toString("utf8");
-      if (raw.length > 2048) tooBig = true;
-    });
-    req.on("end", () => {
-      if (tooBig) return send(res, 413, JSON.stringify({ error: "body too large" }), noStore);
-      let token: unknown;
-      try {
-        token = (JSON.parse(raw) as { token?: unknown }).token;
-      } catch {
-        return send(res, 400, JSON.stringify({ error: "body must be JSON with a token" }), noStore);
-      }
-      if (typeof token !== "string") return send(res, 400, JSON.stringify({ error: "body must be JSON with a token" }), noStore);
-      const c = verifyToken(secret!, token, "login", nowS());
-      if ("error" in c) return send(res, 401, JSON.stringify({ error: c.error }), noStore);
-      if (!o.store.useLoginNonce(c.n!, c.e, nowS())) return send(res, 401, JSON.stringify({ error: "link already used" }), noStore);
-      o.log?.({ event: "web_login", address: c.a });
-      send(res, 200, JSON.stringify({ address: c.a, session: sessionToken(secret!, c.a, nowS()), expiresAt: nowS() + SESSION_TTL_S }), noStore);
-    });
-  };
-
-  /** GET /v1/me with "Authorization: Bearer <session>": the wallet the session belongs to. */
-  const me = (req: IncomingMessage, res: ServerResponse) => {
-    const auth = String(req.headers.authorization ?? "");
-    const c = auth.startsWith("Bearer ") ? verifyToken(secret!, auth.slice(7).trim(), "session", nowS()) : { error: "missing session" };
-    if ("error" in c) return send(res, 401, JSON.stringify({ error: c.error }), noStore);
-    send(res, 200, JSON.stringify({ address: c.a, expiresAt: c.e, stats: o.store.playerStats(c.a as Address) }), noStore);
-  };
-
-  return createServer((req, res) => {
-    if (req.method === "OPTIONS") {
-      res.writeHead(204, {
-        "access-control-allow-origin": "*",
-        "access-control-allow-methods": secret ? "GET, HEAD, POST, OPTIONS" : "GET, HEAD, OPTIONS",
-        ...(secret ? { "access-control-allow-headers": "content-type, authorization" } : {}),
-        "access-control-max-age": "86400",
-      });
-      res.end();
-      return;
-    }
-    const path = (req.url ?? "/").split("?")[0]!.replace(/\/+$/, "");
-    const isLogin = secret !== null && path === "/v1/login";
-    if (isLogin ? req.method !== "POST" : req.method !== "GET" && req.method !== "HEAD") {
-      return send(res, 405, JSON.stringify({ error: isLogin ? "only POST" : "only GET" }), { allow: isLogin ? "POST, OPTIONS" : "GET, HEAD, OPTIONS" });
-    }
-    if (!allow(clientIp(req))) return send(res, 429, JSON.stringify({ error: "too many requests" }), { "retry-after": "60" });
-    if (isLogin) return login(req, res);
-    if (secret !== null && path === "/v1/me") return me(req, res);
-
-    try {
-      const url = new URL(req.url ?? "/", "http://api");
-      const key = url.pathname + url.search;
-      const block = o.store.indexedBlock();
-      const etag = `W/"${block}"`;
-      const headers = { etag, "cache-control": "public, max-age=5" };
-      if (req.headers["if-none-match"] === etag && cache.has(key)) {
-        res.writeHead(304, { ...headers, "access-control-allow-origin": "*" });
-        res.end();
-        return;
-      }
-      let hit = cache.get(key);
-      if (!hit || hit.block !== block) {
-        hit = { block, body: JSON.stringify(route(url)) };
-        if (cache.size >= MAX_CACHE) cache.clear();
-        cache.set(key, hit);
-      }
-      send(res, 200, hit.body, headers);
-    } catch (err) {
-      if (err instanceof HttpError) return send(res, err.status, JSON.stringify({ error: err.message }));
-      o.log?.({ event: "api_error", path: req.url, error: err instanceof Error ? err.message : String(err) });
-      send(res, 500, JSON.stringify({ error: "internal error" }));
-    }
+  const app = Fastify({
+    trustProxy: o.trustProxy ?? false,
+    routerOptions: { ignoreTrailingSlash: true },
+    // Validation messages name the field: "limit must be <= 200", "id must match pattern …".
+    schemaErrorFormatter: (errors, dataVar) =>
+      new HttpError(400, errors.map((e) => `${e.instancePath.replace(/^\//, "") || dataVar} ${e.message}`).join("; ")),
   });
+
+  await app.register(cors, {
+    origin: "*",
+    methods: secret ? ["GET", "HEAD", "POST", "OPTIONS"] : ["GET", "HEAD", "OPTIONS"],
+    ...(secret ? { allowedHeaders: ["content-type", "authorization"] } : {}),
+    maxAge: 86_400,
+    // Answer any OPTIONS with 204, as before Fastify, even without Origin / Access-Control-Request-Method.
+    strictPreflight: false,
+  });
+  await app.register(rateLimit, {
+    max: o.ratePerMinute ?? 120,
+    timeWindow: 60_000,
+    errorResponseBuilder: () => new HttpError(429, "too many requests"),
+  });
+  await app.register(swagger, {
+    openapi: {
+      info: { title: "Nox public API", version: "1", description: "Read-only view of Nox's on-chain games on QIE. Field definitions: docs/metrics.md." },
+    },
+  });
+
+  app.addHook("onSend", async (_req, reply, payload) => {
+    reply.header("x-content-type-options", "nosniff");
+    return payload;
+  });
+  app.setErrorHandler((err: Error & { statusCode?: number; code?: string }, req, reply) => {
+    const status = err.statusCode ?? 500;
+    if (status >= 500) o.log?.({ event: "api_error", path: req.url, error: err.message });
+    let message = status >= 500 ? "internal error" : err.message;
+    // Bad or oversized login bodies get the same clear answer as before the move to Fastify.
+    if (req.routeOptions.url === "/v1/login" && status === 400) message = "body must be JSON with a token";
+    if (status === 413) message = "body too large";
+    if (status === 429) reply.header("retry-after", "60");
+    void reply.status(status).type("application/json; charset=utf-8").send({ error: message });
+  });
+  app.setNotFoundHandler((req, reply) => {
+    // A GET route asked with another method is "only GET"; anything else simply does not exist.
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      return reply.status(405).header("allow", "GET, HEAD, OPTIONS").send({ error: "only GET" });
+    }
+    return reply.status(404).send({ error: "not found" });
+  });
+
+  /** A public GET route, cached per URL until the index reaches a new block (ETag = that block). */
+  const cached = <R extends FastifyRequest>(handler: (req: R) => unknown) => async (req: R, reply: FastifyReply) => {
+    const block = store.indexedBlock();
+    const etag = `W/"${block}"`;
+    reply.header("etag", etag).header("cache-control", "public, max-age=5");
+    if (req.headers["if-none-match"] === etag && cache.has(req.url)) return reply.status(304).send();
+    let hit = cache.get(req.url);
+    if (!hit || hit.block !== block) {
+      hit = { block, body: JSON.stringify(handler(req)) };
+      if (cache.size >= MAX_CACHE) cache.clear();
+      cache.set(req.url, hit);
+    }
+    return reply.type("application/json; charset=utf-8").send(hit.body);
+  };
+
+  type Q<T> = FastifyRequest<{ Querystring: T }>;
+  type P<T> = FastifyRequest<{ Params: T }>;
+  const tags = (t: string) => ({ tags: [t] });
+
+  app.get("/v1/openapi.json", { schema: { hide: true } }, async () => app.swagger());
+
+  app.get("/v1/health", { schema: { ...tags("status"), summary: "Network, chain id, indexed block, last reconciliations" } }, cached(() => ({
+    ok: true,
+    network: o.network,
+    chainId: o.chainId,
+    indexedBlock: store.indexedBlock(),
+    reconciliation: store.lastReconciliation(),
+    paymentsReconciliation: store.lastPaymentReconciliation(),
+  })));
+
+  app.get("/v1/stats", { schema: { ...tags("metrics"), summary: "All-time totals (players, signed txs, games, credits)" } }, cached(() => ({
+    ...store.stats(),
+    indexedBlock: store.indexedBlock(),
+  })));
+
+  app.get(
+    "/v1/leaderboard",
+    {
+      schema: {
+        ...tags("players"),
+        summary: "Players ranked by credits, all time or for one season (a UTC month)",
+        querystring: query({ limit: int(1, 200, 50), season: { type: "string", pattern: SEASON, description: "UTC month, e.g. 2026-10" } }),
+      },
+    },
+    cached((req: Q<{ limit: number; season?: string }>) => ({ season: req.query.season ?? null, players: store.leaderboard(req.query.limit, req.query.season) })),
+  );
+
+  app.get(
+    "/v1/daily",
+    { schema: { ...tags("metrics"), summary: "Distinct signing players per UTC day", querystring: query({ days: int(1, 90, 30) }) } },
+    cached((req: Q<{ days: number }>) => {
+      const today = Math.floor(now() / 86_400_000) * 86_400;
+      return { days: store.dailySigners(today - (req.query.days - 1) * 86_400) };
+    }),
+  );
+
+  app.get(
+    "/v1/engagement",
+    { schema: { ...tags("metrics"), summary: "The Game Night report's metrics over every group, by ISO week", querystring: query({ weeks: int(1, 26, 8) }) } },
+    cached((req: Q<{ weeks: number }>) => {
+      // The last `weeks` ISO weeks, from Monday 00:00 UTC to now (docs/metrics.md). Counts only.
+      const day = Math.floor(now() / 86_400_000);
+      const monday = day - ((day + 3) % 7); // 1 Jan 1970 was a Thursday
+      const from = (monday - 7 * (req.query.weeks - 1)) * 86_400;
+      const to = Math.floor(now() / 1000) + 1;
+      const iso = (ts: number) => new Date(ts * 1000).toISOString().slice(0, 10);
+      return buildReport({ group: "all", from: iso(from), to: iso(to - 1), games: store.finalizedGames(from, to) });
+    }),
+  );
+
+  app.get(
+    "/v1/games",
+    {
+      schema: {
+        ...tags("games"),
+        summary: "Games, newest first",
+        querystring: query({ limit: int(1, 100, 20), before: int(1, Number.MAX_SAFE_INTEGER, undefined, "only games created before this block") }),
+      },
+    },
+    cached((req: Q<{ limit: number; before?: number }>) => ({ games: store.games(req.query.limit, req.query.before) })),
+  );
+
+  app.get(
+    "/v1/games/:id",
+    { schema: { ...tags("games"), summary: "One game with all its events", params: param("id", GAME_ID, "game id, 0x + 64 hex") } },
+    cached((req: P<{ id: string }>) => {
+      const game = store.game(req.params.id as Hex);
+      if (!game) throw new HttpError(404, "game not indexed (yet)");
+      return { game, events: store.eventsOfGame(req.params.id as Hex) };
+    }),
+  );
+
+  app.get(
+    "/v1/players/:address",
+    { schema: { ...tags("players"), summary: "A wallet's stats, history and passes", params: param("address", ADDRESS, "game wallet, 0x + 40 hex") } },
+    cached((req: P<{ address: string }>) => ({
+      ...store.player(req.params.address as Address),
+      // D9: the wallet's pass purchases, on chain or rupiah (amounts in wei as strings; rupiah amounts stay private).
+      passes: store.passPurchases(req.params.address as Address, nowS()).map((p) => ({ ...p, amount: p.amount === null ? null : p.amount.toString() })),
+    })),
+  );
+
+  app.get("/v1/agents", { schema: { ...tags("agents"), summary: "Agent Marketplace agents from NoxAgentRegistry (D16)" } }, cached(() => ({
+    agents: store.agents().map((x) => ({ ...x, revenue: x.revenue.map(str) })),
+  })));
+
+  app.get(
+    "/v1/agents/revenue",
+    { schema: { ...tags("agents"), summary: "Agent revenue per agent and owner, from NoxPayments (wei, as strings)" } },
+    cached(() => {
+      const { agents, owners } = store.paymentLedger();
+      return { agents: agents.map(str), owners: owners.map(str) };
+    }),
+  );
+
+  app.get(
+    "/v1/agents/:id",
+    { schema: { ...tags("agents"), summary: "One agent by its NoxAgentRegistry id", params: param("id", "^\\d{1,9}$", "on-chain agent id") } },
+    cached((req: P<{ id: string }>) => {
+      const one = store.agents().find((x) => x.agentId === Number(req.params.id));
+      if (!one) throw new HttpError(404, "agent not registered (or not indexed yet)");
+      return { ...one, revenue: one.revenue.map(str) };
+    }),
+  );
+
+  if (secret) {
+    const noStore = { "cache-control": "no-store" };
+    app.post(
+      "/v1/login",
+      {
+        bodyLimit: 2048,
+        schema: {
+          ...tags("login"),
+          summary: "Trade the bot's one-time login token for a 7-day session",
+          body: { type: "object", required: ["token"], properties: { token: { type: "string", maxLength: 1024 } } },
+        },
+      },
+      async (req: FastifyRequest<{ Body: { token: string } }>, reply) => {
+        reply.headers(noStore);
+        const c = verifyToken(secret, req.body.token, "login", nowS());
+        if ("error" in c) return reply.status(401).send({ error: c.error });
+        if (!store.useLoginNonce(c.n!, c.e, nowS())) return reply.status(401).send({ error: "link already used" });
+        o.log?.({ event: "web_login", address: c.a });
+        return { address: c.a, session: sessionToken(secret, c.a, nowS()), expiresAt: nowS() + SESSION_TTL_S };
+      },
+    );
+    // GET on the login route says what to use instead.
+    app.get("/v1/login", { schema: { hide: true } }, async (_req, reply) => reply.status(405).header("allow", "POST, OPTIONS").send({ error: "only POST" }));
+    app.get("/v1/me", { schema: { ...tags("login"), summary: "The wallet a session belongs to (Authorization: Bearer <session>)" } }, async (req, reply) => {
+      reply.headers(noStore);
+      const auth = String(req.headers.authorization ?? "");
+      const c = auth.startsWith("Bearer ") ? verifyToken(secret, auth.slice(7).trim(), "session", nowS()) : { error: "missing session" };
+      if ("error" in c) return reply.status(401).send({ error: c.error });
+      return { address: c.a, expiresAt: c.e, stats: store.playerStats(c.a as Address) };
+    });
+  }
+
+  await app.ready();
+  return app;
 }

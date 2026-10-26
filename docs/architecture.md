@@ -31,7 +31,7 @@ flowchart LR
 |---|---|
 | [nox-contracts](https://github.com/Nox-QIE/nox-contracts) | Solidity 0.8.28, Shanghai EVM (QIE has no MCOPY/TSTORE), Foundry tests and deploy scripts, ADR-001/003/004/005/007 |
 | [nox-shared](https://github.com/Nox-QIE/nox-shared) | the pure, deterministic game engine (rules + replay) and the canonical hashing spec (role leaves, Merkle root, action hash, result hash, config hash) with test vectors. The bot and the browser run the same code |
-| nox-backend (this repo) | the Telegram bot (grammY), the Game Master, the chain ledger (viem), the event indexer and the public API, operator CLIs |
+| nox-backend (this repo) | the Telegram bot (grammY), the Game Master, the chain ledger (viem), the event indexer and the public API (Fastify, OpenAPI at `/v1/openapi.json`), operator CLIs |
 | [nox-frontend](https://github.com/Nox-QIE/nox-frontend) | the public proof dashboard: recomputes every check of a game in the visitor's browser |
 
 ## One game, end to end

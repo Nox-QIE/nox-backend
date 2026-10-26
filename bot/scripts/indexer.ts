@@ -55,16 +55,20 @@ if (process.argv.includes("--once")) {
   if (c.reconcileMinutes !== null) await reconcile();
   store.close();
 } else {
-  const api = c.api ? createApi({ store, network: c.network, chainId: chain.id, trustProxy: c.api.trustProxy, ratePerMinute: c.api.ratePerMinute, loginSecret: c.api.loginSecret, log }) : null;
-  api?.on("error", (err) => {
-    log({ event: "api_error", error: err.message });
-    process.exit(1);
-  });
-  if (c.api && api) api.listen(c.api.port, c.api.host, () => log({ event: "api_listening", url: `http://${c.api!.host}:${c.api!.port}/v1/health` }));
+  const api = c.api
+    ? await createApi({ store, network: c.network, chainId: chain.id, trustProxy: c.api.trustProxy, ratePerMinute: c.api.ratePerMinute, loginSecret: c.api.loginSecret, log })
+    : null;
+  if (c.api && api) {
+    await api.listen({ port: c.api.port, host: c.api.host }).catch((err: Error) => {
+      log({ event: "api_error", error: err.message });
+      process.exit(1);
+    });
+    log({ event: "api_listening", url: `http://${c.api.host}:${c.api.port}/v1/health` });
+  }
   let stopping = false;
   const stop = () => {
     stopping = true;
-    api?.close();
+    void api?.close();
   };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
