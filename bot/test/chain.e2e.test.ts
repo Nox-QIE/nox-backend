@@ -14,6 +14,7 @@ import {
 } from "../src/chain/contracts.js";
 import { EventIndexer, EventStore, reconcileCredits, reconcilePayments, type IndexerClient } from "../src/chain/indexer.js";
 import { operatorFrom, registerAgentOnChain } from "../src/chain/operator.js";
+import { PassReader, type PassClient } from "../src/chain/passes.js";
 import { settleMonth } from "../src/chain/settle.js";
 import { gasLimitFor, rpcTransport, ViemLedger, type PlayerReward, type TxRecord } from "../src/chain/viem-ledger.js";
 import { PlayerWallets } from "../src/chain/wallets.js";
@@ -346,6 +347,30 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
       treasuryBalance: (t, blockNumber) => publicClient.readContract({ address: payments, abi: NoxPaymentsAbi, functionName: "treasuryBalance", args: [t], blockNumber }),
     });
     expect(rec).toMatchObject({ checked: 2, mismatches: [] });
+  }, 60_000);
+
+  it("a host pays from their own wallet for a Host Pass on their game wallet (buyPassFor)", async () => {
+    const operator = privateKeyToAccount(OPERATOR_KEY);
+    const wallet = createWalletClient({ account: operator, chain, transport: http(RPC) });
+    const deploy = async (abi: never, bytecode: Hex, args: unknown[]) =>
+      (await publicClient.waitForTransactionReceipt({ hash: await wallet.deployContract({ abi, bytecode, args: args as never }) })).contractAddress!;
+    const registry = await deploy(NoxAgentRegistryAbi as never, NoxAgentRegistryBytecode, [operator.address, operator.address]);
+    const payments = await deploy(NoxPaymentsAbi as never, NoxPaymentsBytecode, [operator.address, operator.address, registry]);
+    const NATIVE = "0x0000000000000000000000000000000000000000" as const;
+    await publicClient.waitForTransactionReceipt({ hash: await wallet.writeContract({ address: payments, abi: NoxPaymentsAbi, functionName: "configurePass", args: [1, NATIVE, 10n ** 18n, 30n * 86400n] }) });
+
+    const gameWallet = new PlayerWallets(Uint8Array.from({ length: 32 }, (_, i) => 77 + i)).address(4242); // the host's derived wallet
+    const passes = new PassReader({ client: indexClient as unknown as PassClient, payments, ttlMs: 0 });
+    expect((await passes.status(gameWallet)).active).toBe(false);
+    // The host's own wallet (anvil dev account #1) pays; the game wallet holds no QIE and signs nothing.
+    const host = createWalletClient({ account: privateKeyToAccount("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"), chain, transport: http(RPC) });
+    await publicClient.waitForTransactionReceipt({
+      hash: await host.writeContract({ address: payments, abi: NoxPaymentsAbi, functionName: "buyPassFor", args: [gameWallet, 1, 2, NATIVE], value: 2n * 10n ** 18n }),
+    });
+    const s = await passes.status(gameWallet);
+    expect(s.active).toBe(true);
+    expect(await publicClient.getBalance({ address: gameWallet })).toBe(0n);
+    expect(await passes.offer()).toEqual({ wei: 10n ** 18n, periodDays: 30 });
   }, 60_000);
 
   it("does not trust a node that underestimates gas (QIE testnet answered 22088 for createGame)", async () => {

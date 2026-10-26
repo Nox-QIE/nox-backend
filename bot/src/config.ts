@@ -53,6 +53,8 @@ export interface Config {
   operatorChatId?: number;
   /** The indexer's public API (npm run indexer), for player stats in the bot. Optional. */
   apiUrl?: string;
+  /** "required": themes, Marketplace GMs and big lobbies need the host's Host Pass (NoxPayments). */
+  hostPass: "off" | "required";
   /** Webhook mode when set; long polling otherwise. */
   webhook?: { url: string; secret: string; port: number; host: string };
   /** Per-user limit on commands, button taps and private messages. */
@@ -86,6 +88,15 @@ function loadWebhook(env: NodeJS.ProcessEnv): NonNullable<Config["webhook"]> {
   return { url, secret, port, host: env.NOX_WEBHOOK_HOST || "127.0.0.1" };
 }
 
+function hostPassMode(env: NodeJS.ProcessEnv): "off" | "required" {
+  const v = env.NOX_HOST_PASS || "off";
+  if (v !== "off" && v !== "required") throw new Error('NOX_HOST_PASS must be "off" or "required"');
+  if (v === "required" && (!env.NOX_CHAIN || env.NOX_CHAIN === "off" || !env.NOX_PAYMENTS_ADDRESS)) {
+    throw new Error("NOX_HOST_PASS=required needs NOX_CHAIN and NOX_PAYMENTS_ADDRESS (passes live in NoxPayments)");
+  }
+  return v;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const botToken = env.BOT_TOKEN;
   if (!botToken) throw new Error("BOT_TOKEN is not set (get one from @BotFather)");
@@ -97,6 +108,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ...(env.NOX_API_URL ? { apiUrl: env.NOX_API_URL.replace(/\/+$/, "") } : {}),
     ...(env.NOX_WEBHOOK_URL ? { webhook: loadWebhook(env) } : {}),
     rateLimit: parseRateLimit(env.NOX_RATE_LIMIT || "20/10"),
+    hostPass: hostPassMode(env),
     timings: {
       lobbyMs: seconds(env, "LOBBY_SECONDS", DEFAULT_TIMINGS.lobbyMs),
       nightMs: seconds(env, "NIGHT_SECONDS", DEFAULT_TIMINGS.nightMs),
