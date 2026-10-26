@@ -6,6 +6,7 @@ import type { Hex } from "viem";
 import type { AgentRecord, Persona } from "./agents.js";
 import type { LedgerNightReveal, LedgerRoleReveal } from "./chain/ledger.js";
 import type { TxRecord } from "./chain/viem-ledger.js";
+import type { NarratorReport } from "./narrator.js";
 import type { Lang } from "./i18n.js";
 
 /** "disputed" games keep their secrets (the evidence) and are never purged automatically. */
@@ -69,7 +70,26 @@ export interface Store {
   txsOfGame(gameId: Hex): StoredTx[];
   txsBetween(fromMs: number, toMs: number): StoredTx[];
   recordOperatorBalance(wei: bigint): void;
+  /** Agent health (F18-S11): one row per finished game narrated by a Marketplace agent. */
+  recordAgentGame(agentId: number, report: NarratorReport): void;
+  agentGames(agentId: number, limit: number): AgentGame[];
+  /** Moderation log (F18-D06): every suspend/activate decision with its reason. */
+  addModeration(agentId: number, decision: "suspended" | "activated" | "note", reason: string, by: string): void;
+  moderationLog(agentId: number): ModerationEntry[];
   operatorBalances(fromMs: number): { at: number; wei: bigint }[];
+}
+
+export interface AgentGame extends NarratorReport {
+  at: number;
+}
+
+export interface ModerationEntry {
+  agentId: number;
+  decision: "suspended" | "activated" | "note";
+  reason: string;
+  /** "auto" for automatic suspension, otherwise the operator. */
+  by: string;
+  at: number;
 }
 
 export interface StoredTx extends TxRecord {
@@ -132,6 +152,25 @@ export class SqliteStore implements Store {
       CREATE INDEX IF NOT EXISTS chain_txs_game ON chain_txs (game_id);
       CREATE INDEX IF NOT EXISTS chain_txs_at ON chain_txs (at);
       CREATE TABLE IF NOT EXISTS operator_balances (at INTEGER PRIMARY KEY, wei TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS agent_games (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id INTEGER NOT NULL,
+        persona INTEGER NOT NULL,
+        nox INTEGER NOT NULL,
+        template INTEGER NOT NULL,
+        rejected INTEGER NOT NULL,
+        demoted INTEGER NOT NULL,
+        at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS agent_games_agent ON agent_games (agent_id, id);
+      CREATE TABLE IF NOT EXISTS agent_moderation (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id INTEGER NOT NULL,
+        decision TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        by_whom TEXT NOT NULL,
+        at INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS games (
         game_id TEXT PRIMARY KEY,
         chat_id INTEGER NOT NULL,
@@ -319,6 +358,32 @@ export class SqliteStore implements Store {
     return (this.db.prepare("SELECT at, wei FROM operator_balances WHERE at >= ? ORDER BY at").all(fromMs) as { at: number; wei: string }[]).map((r) => ({
       at: r.at,
       wei: BigInt(r.wei),
+    }));
+  }
+
+  recordAgentGame(agentId: number, r: NarratorReport) {
+    this.db
+      .prepare("INSERT INTO agent_games (agent_id, persona, nox, template, rejected, demoted, at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(agentId, r.persona, r.nox, r.template, r.rejected, r.demoted ? 1 : 0, Date.now());
+  }
+
+  agentGames(agentId: number, limit: number): AgentGame[] {
+    return (
+      this.db.prepare("SELECT * FROM agent_games WHERE agent_id = ? ORDER BY id DESC LIMIT ?").all(agentId, limit) as Record<string, number>[]
+    ).map((r) => ({ persona: r.persona!, nox: r.nox!, template: r.template!, rejected: r.rejected!, demoted: r.demoted === 1, at: r.at! }));
+  }
+
+  addModeration(agentId: number, decision: ModerationEntry["decision"], reason: string, by: string) {
+    this.db.prepare("INSERT INTO agent_moderation (agent_id, decision, reason, by_whom, at) VALUES (?, ?, ?, ?, ?)").run(agentId, decision, reason, by, Date.now());
+  }
+
+  moderationLog(agentId: number): ModerationEntry[] {
+    return (this.db.prepare("SELECT * FROM agent_moderation WHERE agent_id = ? ORDER BY id").all(agentId) as Record<string, string | number>[]).map((r) => ({
+      agentId: Number(r.agent_id),
+      decision: r.decision as ModerationEntry["decision"],
+      reason: String(r.reason),
+      by: String(r.by_whom),
+      at: Number(r.at),
     }));
   }
 

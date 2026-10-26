@@ -1,6 +1,6 @@
 import type { PublicView, Role, Team } from "@nox/shared/engine";
 import { esc, unesc, type Lang } from "../i18n.js";
-import { TemplateNarrator, type Narrator, type Wording } from "../narrator.js";
+import { TemplateNarrator, type Narrator, type NarratorReport, type Wording } from "../narrator.js";
 import { checkNarration } from "./guard.js";
 import { costUsd, type GmModel, type GmUsage } from "./model.js";
 import { systemPrompt, userPrompt, type Beat, type Persona } from "./prompt.js";
@@ -149,12 +149,13 @@ export class LlmNarrator implements Narrator {
     return this.join(await this.flavor({ kind: "gameOver", winner, roster: raw }, this.names), fact);
   }
 
-  finish() {
+  finish(): NarratorReport {
     let cost: number | null = 0;
     for (const [model, u] of Object.entries(this.stats.byModel)) {
       const c = costUsd(model, u, this.opts.price);
       cost = c === null || cost === null ? null : cost + c;
     }
     this.opts.log?.({ event: "gm_usage", model: this.opts.model.model, ...this.stats, costUsd: cost });
+    return { ...this.stats.voice, rejected: this.personaRejections, demoted: this.stats.personaDemoted };
   }
 }
