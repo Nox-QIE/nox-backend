@@ -56,6 +56,8 @@ export interface Config {
   webUrl?: string;
   /** Telegram user id that gets incident alerts by DM (it must have pressed Start). Optional. */
   operatorChatId?: number;
+  /** Who sells rupiah passes by invoice (a Telegram @handle or e-mail), shown in /pass (F14-D04). */
+  paymentContact?: string;
   /** The indexer's public API (npm run indexer), for player stats in the bot. Optional. */
   apiUrl?: string;
   /** Nudge a quiet discussion: "quiet" (default, needs Telegram privacy mode off), "always", "off". */
@@ -117,6 +119,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     dbPath: env.NOX_DB_PATH || "data/nox.db",
     ...(env.NOX_WEB_URL ? { webUrl: env.NOX_WEB_URL } : {}),
     ...(env.NOX_OPERATOR_CHAT_ID ? { operatorChatId: chatId(env.NOX_OPERATOR_CHAT_ID) } : {}),
+    ...(env.NOX_PAYMENT_CONTACT ? { paymentContact: env.NOX_PAYMENT_CONTACT } : {}),
     ...(env.NOX_API_URL ? { apiUrl: env.NOX_API_URL.replace(/\/+$/, "") } : {}),
     ...(env.NOX_WEBHOOK_URL ? { webhook: loadWebhook(env) } : {}),
     rateLimit: parseRateLimit(env.NOX_RATE_LIMIT || "20/10"),

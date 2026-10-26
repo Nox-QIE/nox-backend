@@ -121,3 +121,19 @@ describe("rupiah passes (D9, F14-D01)", () => {
     expect(s.fiatPassByReceipt("0x" + "cd".repeat(32))).toBeNull();
   });
 });
+
+describe("account country for the payment rail (F14-D04)", () => {
+  it("keeps the player's own choice over a later guess, and forgets it with the account", () => {
+    const s = new SqliteStore(":memory:");
+    s.upsertUser(1, { locale: "id", address: null, country: "ID" });
+    expect(s.getUser(1)!.country).toBe("ID");
+    expect(s.setUserCountry(1, "SG")).toBe(true);
+    s.upsertUser(1, { locale: "id", address: null, country: "ID" }); // /start again: the guess does not win
+    expect(s.getUser(1)!.country).toBe("SG");
+    s.upsertUser(2, { locale: "en", address: null });
+    expect(s.getUser(2)!.country).toBeNull();
+    expect(s.setUserCountry(3, "ID")).toBe(false); // no account
+    s.forgetUser(1);
+    expect(s.getUser(1)).toBeNull();
+  });
+});

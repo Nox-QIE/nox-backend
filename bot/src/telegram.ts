@@ -5,6 +5,7 @@ import { esc, langFrom, T, type Lang, type PlayerStatsLite } from "./i18n.js";
 import { noLedger, type GameLedger } from "./chain/ledger.js";
 import { chainFor, rpcTransport, ViemLedger, type PlayerReward, type ViemLedgerOptions } from "./chain/viem-ledger.js";
 import { PassReader, type PassClient } from "./chain/passes.js";
+import { countryGuess, parseCountry, payRail, type PayRail } from "./pay-rail.js";
 import { GameNights } from "./gamenight.js";
 import { Practice, PRACTICE, PRACTICE_PAYLOADS, practiceLink } from "./practice.js";
 import { AlertMonitor } from "./alerts.js";
@@ -246,9 +247,11 @@ export async function startReply(a: {
   userId: number;
   lang: Lang;
   statsFor?: (address: string) => Promise<PlayerStatsLite | null>;
+  /** First guess of the account's country, for the payment rail (F14-D04); never overwrites a choice. */
+  country?: string | null;
 }): Promise<string> {
   const address = a.ledger.addressOf(a.userId);
-  const isNew = a.store ? a.store.upsertUser(a.userId, { locale: a.lang, address }).isNew : !a.registry.startedUsers.has(a.userId);
+  const isNew = a.store ? a.store.upsertUser(a.userId, { locale: a.lang, address, country: a.country ?? null }).isNew : !a.registry.startedUsers.has(a.userId);
   a.registry.markStarted(a.userId);
   const t = T[a.lang];
   if (isNew) return t.welcome;
@@ -257,12 +260,22 @@ export async function startReply(a: {
 }
 
 /** /pass in a private chat: the player's game wallet, their Host Pass, and how to pay for it. */
-export async function passReply(a: { ledger: GameLedger; passes: PassReader | null; payments?: string; explorer?: string; userId: number; lang: Lang }): Promise<string> {
+export async function passReply(a: {
+  ledger: GameLedger;
+  passes: PassReader | null;
+  payments?: string;
+  explorer?: string;
+  userId: number;
+  lang: Lang;
+  /** The account's payment rail (F14-D04) and who sells rupiah passes. */
+  rail?: PayRail;
+  contact?: string;
+}): Promise<string> {
   const t = T[a.lang];
   const wallet = a.ledger.addressOf(a.userId);
   if (!wallet || !a.passes || !a.payments) return t.passStatus({ wallet: wallet ?? "-", active: false, until: null, price: null, periodDays: null, payments: "", explorer: "" });
   const [status, offer] = await Promise.all([a.passes.status(wallet), a.passes.offer()]);
-  return t.passStatus({
+  const text = t.passStatus({
     wallet,
     active: status.active,
     until: status.active ? new Date(status.expiresAt * 1000).toISOString().slice(0, 10) : null,
@@ -271,10 +284,12 @@ export async function passReply(a: { ledger: GameLedger; passes: PassReader | nu
     payments: a.payments,
     explorer: `${a.explorer ?? ""}/address/${a.payments}`,
   });
+  // Rupiah rail: the invoice comes first; paying on chain from a wallet stays possible.
+  return a.rail === "rupiah" && offer ? `${text}\n\n${t.passRupiah(wallet, a.contact ?? null)}` : text;
 }
 
 /** Wire Telegram updates to the registry. Nox stays a regular bot: no Mini App / Web App buttons. */
-export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, apiUrl, timings, gm, chain, rateLimit, hostPass, nudge }: Config) {
+export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, apiUrl, timings, gm, chain, rateLimit, hostPass, nudge, paymentContact }: Config) {
   const bot = new Bot(botToken);
   await bot.init();
   // First middleware: refused updates never reach the game.
@@ -338,10 +353,31 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
   bot.command("pass", async (ctx) => {
     if (ctx.chat.type !== "private" || !ctx.from) return;
     const lang = langFrom(ctx.from.language_code);
-    const text = await passReply({ ledger, passes, ...(chain.paymentsAddress ? { payments: chain.paymentsAddress } : {}), ...(explorer ? { explorer } : {}), userId: ctx.from.id, lang }).catch(
-      () => T[lang].stale,
-    );
+    const country = store.getUser(ctx.from.id)?.country ?? countryGuess(ctx.from.language_code);
+    const text = await passReply({
+      ledger,
+      passes,
+      ...(chain.paymentsAddress ? { payments: chain.paymentsAddress } : {}),
+      ...(explorer ? { explorer } : {}),
+      userId: ctx.from.id,
+      lang,
+      rail: payRail(country),
+      ...(paymentContact ? { contact: paymentContact } : {}),
+    }).catch(() => T[lang].stale);
     await ctx.reply(text, { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
+  });
+  // /negara ID, /country SG: the player's own country, which only picks the payment rail (F14-D04).
+  bot.command(["negara", "country"], async (ctx) => {
+    if (ctx.chat.type !== "private" || !ctx.from) return;
+    const t = T[langFrom(ctx.from.language_code)];
+    const country = parseCountry(ctx.match);
+    if (!country) return void (await ctx.reply(t.countryUsage));
+    // A private chat with the bot means the player started it, so a missing account is created here.
+    if (!store.setUserCountry(ctx.from.id, country)) {
+      store.upsertUser(ctx.from.id, { locale: langFrom(ctx.from.language_code), address: ledger.addressOf(ctx.from.id), country });
+      registry.markStarted(ctx.from.id);
+    }
+    await ctx.reply(t.countrySet(country, payRail(country) === "rupiah"));
   });
   const practice = new Practice({ botUsername: bot.botInfo.username, counts: store });
   // Booked Game Nights (F04-S06): announcements and the open call in the client's group, every minute.
@@ -361,7 +397,15 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
       await ctx.reply(q.text, opts(q.keyboard));
       return;
     }
-    const text = await startReply({ registry, store, ledger, userId: ctx.from.id, lang: langFrom(ctx.from.language_code), ...(statsFor ? { statsFor } : {}) });
+    const text = await startReply({
+      registry,
+      store,
+      ledger,
+      userId: ctx.from.id,
+      lang: langFrom(ctx.from.language_code),
+      country: countryGuess(ctx.from.language_code),
+      ...(statsFor ? { statsFor } : {}),
+    });
     await ctx.reply(text, { parse_mode: "HTML" });
   });
 
