@@ -5,6 +5,7 @@ import { esc, langFrom, T, type Lang, type PlayerStatsLite } from "./i18n.js";
 import { noLedger, type GameLedger } from "./chain/ledger.js";
 import { chainFor, rpcTransport, ViemLedger, type PlayerReward, type ViemLedgerOptions } from "./chain/viem-ledger.js";
 import { PassReader, type PassClient } from "./chain/passes.js";
+import { Practice, PRACTICE, PRACTICE_PAYLOADS, practiceLink } from "./practice.js";
 import { qie, TreasuryWatch } from "./treasury.js";
 import { RateLimiter, rateLimitMiddleware } from "./ratelimit.js";
 import { PlayerWallets } from "./chain/wallets.js";
@@ -326,8 +327,19 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
     );
     await ctx.reply(text, { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
   });
+  const practice = new Practice({ botUsername: bot.botInfo.username, counts: store });
+  bot.command(["latihan", "practice"], async (ctx) => {
+    const lang = langFrom(ctx.from?.language_code);
+    await ctx.reply(PRACTICE[lang].groupLink(practiceLink(bot.botInfo.username, lang)), { link_preview_options: { is_disabled: true } });
+  });
   bot.command("start", async (ctx) => {
     if (ctx.chat.type !== "private" || !ctx.from) return;
+    // t.me/<bot>?start=latihan opens the Scam Shield practice; it creates no account (nothing about the person is kept).
+    if (PRACTICE_PAYLOADS.includes(ctx.match.trim().toLowerCase())) {
+      const q = practice.start(ctx.from.id, ctx.match.trim().toLowerCase() === "latihan" ? "id" : langFrom(ctx.from.language_code));
+      await ctx.reply(q.text, opts(q.keyboard));
+      return;
+    }
     const text = await startReply({ registry, store, ledger, userId: ctx.from.id, lang: langFrom(ctx.from.language_code), ...(statsFor ? { statsFor } : {}) });
     await ctx.reply(text, { parse_mode: "HTML" });
   });
@@ -361,6 +373,14 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
   // Callback data: j:<room> | s:<room> | a:<room>:<agentId> | n:<room>:<round>:<target> | v:<room>:<round>:<target>
   bot.on("callback_query:data", async (ctx) => {
     const [kind, roomId, roundStr, target] = ctx.callbackQuery.data.split(":");
+    if (kind === "q") {
+      const next = practice.answer(ctx.from.id, Number(roomId), roundStr === "s" ? "s" : "k");
+      if (!next) return void (await ctx.answerCallbackQuery({ text: stripTags(T[langFrom(ctx.from.language_code)].stale) }));
+      await ctx.answerCallbackQuery();
+      await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() }).catch(() => undefined); // no second tap on an answered item
+      await ctx.reply(next.text, opts(next.keyboard));
+      return;
+    }
     if (kind === "f") {
       const t = T[langFrom(ctx.from.language_code)];
       const done = registry.forgetUser(ctx.from.id);

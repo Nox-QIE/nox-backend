@@ -75,3 +75,7 @@ Di mana tiap data store desain (D1–D16) berada sekarang (store bot, chain, ind
 ## Host Pass
 
 `/pass` di chat pribadi menampilkan wallet game pemain, status Host Pass (dari `NoxPayments.passExpiry`), harga, dan cara bayar: dari wallet sendiri dengan `buyPassFor(<wallet game>, 1, <periode>, 0x0…0)`, sehingga Nox tidak pernah memakai dana pemain. Dengan `NOX_HOST_PASS=required`, tema, Game Master Marketplace, dan lobby lebih dari 8 pemain butuh Host Pass aktif milik host (dibaca on-chain, cache 5 menit; bila RPC gagal host tetap boleh lanjut dan kejadian dicatat). Scam Shield tetap gratis.
+
+## Latihan Scam Shield (untuk keluarga)
+
+`https://t.me/<bot>?start=latihan` (atau `?start=practice`) membuka kuis 3 menit di chat pribadi: 6 pesan bergaya penipuan "misi berbayar" (satu di antaranya aman), pilih penipuan atau aman, tiap jawaban dijelaskan, lalu kartu Scam Shield dan tautan untuk diteruskan. `/latihan` di grup mengirim tautannya. Tidak butuh wallet dan tidak membuat akun; jawaban hanya di memori selama kuis, store menyimpan hitungan harian (dimulai/selesai) saja.
