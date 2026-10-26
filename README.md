@@ -10,6 +10,8 @@ Backend Nox: bot Telegram, worker on-chain, dan database.
 
 Memakai [`nox-shared`](https://github.com/Nox-QIE/nox-shared) untuk aturan game, crypto-spec, dan config. Bagian dari [Nox](https://github.com/Nox-QIE).
 
+
+Peta arsitektur (komponen, alur satu game, model kepercayaan, data, operasi): [docs/architecture.md](docs/architecture.md).
 ## Indexer event on-chain
 
 `npm run indexer` menjaga `data/index.db` tetap sama dengan event kontrak Nox (NoxGame, NoxCredits, dan bila diisi NoxAgentRegistry & NoxPayments). Hanya membaca chain, jadi tidak butuh `NOX_OPERATOR_KEY` atau `NOX_WALLET_SECRET`.
