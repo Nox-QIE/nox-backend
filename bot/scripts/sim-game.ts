@@ -15,7 +15,7 @@ import { TemplateNarrator } from "../src/narrator.js";
 import type { Messenger, Scheduler } from "../src/ports.js";
 import { Registry } from "../src/registry.js";
 import { TASK_SCAM } from "../src/scenarios.js";
-import { NoxBadgesAbi } from "../src/chain/contracts.js";
+import { NoxBadgesAbi, NoxGameAbi } from "../src/chain/contracts.js";
 import { keccak256, toHex } from "viem";
 import { SqliteStore } from "../src/store.js";
 import { gasReport, qie } from "../src/treasury.js";
@@ -92,7 +92,16 @@ if (scamShield && chain.badgesAddress) {
     console.log(`Scam Spotter ${ledger.addressOf(u)}: ${n}`);
   }
 }
-for (const r of rewards) console.log(`credits ${ledger.addressOf(r.userId)}: ${r.total} = base ${r.base} + role ${r.role} + vote ${r.vote} + streak ${r.streak} (streak ${r.streakDays} day(s))`);
+if (scamShield) {
+  // The game's mode on chain (nox-contracts#17): 1 = Scam Shield, so a village win earns the bonus.
+  const mode = await ledger.publicClient.readContract({ address: chain.gameAddress!, abi: NoxGameAbi, functionName: "modeOf", args: [room.gameId!] }).catch(() => null);
+  console.log(`mode on chain ${mode ?? "n/a (NoxGame without modes)"}`);
+}
+for (const r of rewards) {
+  console.log(
+    `credits ${ledger.addressOf(r.userId)}: ${r.total} = base ${r.base} + role ${r.role} + vote ${r.vote} + streak ${r.streak}${r.scamShield ? ` + Scam Shield ${r.scamShield}` : ""} (streak ${r.streakDays} day(s))`,
+  );
+}
 for (const r of gasReport(store.txsOfGame(room.gameId!).map((t) => ({ ...t, at: Date.now() }))))
   console.log(`gas ${r.step}: ${r.txs} tx, ${r.gasUsed} gas, fee ${qie(r.feeWei, 12)} QIE${r.failed ? `, ${r.failed} not successful` : ""}`);
 if (operatorWei !== null) console.log(`operator balance ${qie(operatorWei)} QIE`);

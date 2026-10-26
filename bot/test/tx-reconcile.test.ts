@@ -51,4 +51,12 @@ describe("tx ledger vs chain events (F07-D05)", () => {
     index.apply("k", [ev("VoteCast", 0xabc, 5)], 10n, null);
     expect(index.eventsOfTx(h(0xabc).toUpperCase().replace("0X", "0x") as Hex)).toEqual(["VoteCast"]);
   });
+
+  it("expects GameCreated from a Scam Shield game's createGameWithMode", () => {
+    const index = new EventStore(":memory:");
+    index.apply("k", [ev("GameCreated", 0x51, 5)], 10n, null);
+    const r = reconcileTxs([tx("createGameWithMode", 0x51, 5), tx("createGameWithMode", 0x52, 6)], (hash) => index.eventsOfTx(hash), index.indexedBlock());
+    expect(r.checked).toBe(2);
+    expect(r.missing.map((m) => [m.step, m.expected])).toEqual([["createGameWithMode", "GameCreated"]]);
+  });
 });
