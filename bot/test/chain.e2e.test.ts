@@ -1,5 +1,5 @@
 import { execSync, spawn, type ChildProcess } from "node:child_process";
-import { createPublicClient, createWalletClient, custom, defineChain, http, type Address, type Hex } from "viem";
+import { createPublicClient, createWalletClient, custom, defineChain, http, type Abi, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -12,6 +12,7 @@ import {
   NoxPaymentsAbi,
   NoxPaymentsBytecode,
 } from "../src/chain/contracts.js";
+import { EventIndexer, EventStore, type IndexerClient } from "../src/chain/indexer.js";
 import { operatorFrom, registerAgentOnChain } from "../src/chain/operator.js";
 import { settleMonth } from "../src/chain/settle.js";
 import { gasLimitFor, rpcTransport, ViemLedger } from "../src/chain/viem-ledger.js";
@@ -323,5 +324,29 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     expect(await ledger.statusOf(gameId)).toBe(2); // Running: create, 5 joins and commitRoles all landed
     expect(gasLimitFor("createGame", 22088n)).toBe(110_000n);
     expect(gasLimitFor("revealAndFinalize", 1_500_000n)).toBe(1_875_000n);
+  }, 60_000);
+
+  it("indexes every game event and its credits match NoxCredits.balanceOf for each player", async () => {
+    const store = new EventStore(":memory:");
+    const indexer = new EventIndexer({
+      client: publicClient as unknown as IndexerClient,
+      store,
+      contracts: [
+        { name: "NoxGame", address: gameAddress, abi: NoxGameAbi as Abi },
+        { name: "NoxCredits", address: creditsAddress, abi: NoxCreditsAbi as Abi },
+      ],
+      fromBlock: 0n,
+      confirmations: 0n,
+      chunk: 7n, // small chunks so the run crosses many chunk borders
+    });
+    await indexer.syncOnce();
+    const board = store.leaderboard(1000);
+    expect(board.length).toBeGreaterThanOrEqual(5);
+    for (const row of board) {
+      const onChain = await publicClient.readContract({ address: creditsAddress, abi: NoxCreditsAbi, functionName: "balanceOf", args: [row.account] });
+      expect(BigInt(row.credits)).toBe(onChain);
+    }
+    expect(store.stats().finishedGames).toBeGreaterThanOrEqual(1);
+    expect((await indexer.syncOnce()).events).toBe(0);
   }, 60_000);
 });
