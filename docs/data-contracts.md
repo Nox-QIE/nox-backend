@@ -123,8 +123,9 @@ See [agent-terms.md](agent-terms.md), section 3, for the full table. In short:
 - **In.**
   - Booking details given to the operator, who records them with `npm run gamenight -- quote` (table `bookings`, D10):
     - client name, optional contact, Telegram group;
-    - start time with a time zone, language, theme, agent;
+    - start time with a time zone, language, theme (a Nox theme, a scenario, or `client:<key>` for the client's own theme), agent;
     - price in QIE or a token.
+  - A client's own theme (`gamenight theme <file.json>`: a persona and optional role names per language, owned by that client, versioned) is offered only in lobbies opened from that client's booking. Its version and a hash of its text go into the committed config (`client-theme:<key>`).
   - At the booked time, the bot opens the night in the client's group (`src/gamenight.ts`). Whoever taps the host button first hosts, with the booked theme, scenario or agent and no Host Pass needed. `gamenight sync` marks the booking `played` once a game finished there.
   - Payment on chain: the client calls `NoxPayments.payGameNight(bookingId, chainAgentId, token, amount)` from their own wallet. That credits the agent owner's share directly.
   - `gamenight sync` matches the `GameNightPaid` event to the quote. Token, amount (at least the quote) and agent must all match, because the contract accepts any amount. A matching payment marks the booking `paid`; a mismatch is noted, and the booking stays `quoted`.

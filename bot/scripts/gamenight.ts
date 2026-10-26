@@ -7,13 +7,16 @@
  *   npm run gamenight -- quote <chat-id|-> <start, e.g. 2026-11-07T19:00+07:00> <price> "<client>"
  *       [--token 0x… --decimals 6] [--agent <id>] [--theme horor] [--lang id|en] [--contact "@handle"]
  *   npm run gamenight -- list | show <booking> | sync | set-chat <booking> <chat-id> | cancel <booking> "<reason>" | forget-contact <booking>
+ *   npm run gamenight -- theme <client-theme.json> | themes      (client themes, F04-S05: quote with --theme client:<key>)
  */
 import { parseUnits, type Address } from "viem";
 import { checkPayment, NATIVE, newBookingId, paymentInstructions, type Booking } from "../src/bookings.js";
 import { EventStore } from "../src/chain/indexer.js";
 import { AGENT_TERMS, isAddress } from "../src/agents.js";
 import { SqliteStore } from "../src/store.js";
-import { OPEN_GRACE_MS } from "../src/gamenight.js";
+import { readFileSync } from "node:fs";
+import { checkClientTheme, type ClientTheme } from "../src/client-themes.js";
+import { clientThemeKey, OPEN_GRACE_MS } from "../src/gamenight.js";
 import { scenarioFrom } from "../src/scenarios.js";
 import { themeIdFrom } from "../src/themes.js";
 
@@ -51,7 +54,14 @@ switch (cmd) {
     const price = parseUnits(c, decimals);
     if (price <= 0n) throw new Error("price must be above 0");
     const theme = flag("theme") ?? null;
-    if (theme !== null && themeIdFrom(theme) === null && !scenarioFrom(theme)) throw new Error(`unknown theme or scenario ${theme}`);
+    const own = clientThemeKey(theme);
+    if (own !== null) {
+      // A client theme belongs to one client: only that client's bookings may use it.
+      const t = store.getClientTheme(own);
+      if (!t) throw new Error(`no client theme ${own} (gamenight theme <file.json>)`);
+      if (t.client.trim().toLowerCase() !== d.trim().toLowerCase()) throw new Error(`client theme ${own} belongs to "${t.client}"`);
+      if (!t.text[(flag("lang") ?? "id") as "id" | "en"]) throw new Error(`client theme ${own} has no ${flag("lang") ?? "id"} text`);
+    } else if (theme !== null && themeIdFrom(theme) === null && !scenarioFrom(theme)) throw new Error(`unknown theme or scenario ${theme}`);
     const lang = flag("lang") ?? "id";
     if (lang !== "id" && lang !== "en") throw new Error("--lang must be id or en");
     let agentId: number | null = null;
@@ -129,6 +139,21 @@ switch (cmd) {
     console.log(`${g.id} cancelled: ${b.trim()}${g.status === "paid" ? "\nIt was paid on chain: refund the client from the treasury by hand." : ""}`);
     break;
   }
+  case "theme": {
+    if (!a) throw new Error("usage: theme <client-theme.json>");
+    const t = JSON.parse(readFileSync(a, "utf8")) as Omit<ClientTheme, "version">;
+    const problems = checkClientTheme(t);
+    if (problems.length) {
+      console.error(`Client theme rejected:\n- ${problems.join("\n- ")}`);
+      process.exit(1);
+    }
+    const { version } = store.saveClientTheme(t);
+    console.log(`Client theme ${t.key} v${version} saved for ${t.client}. Quote with --theme client:${t.key}.`);
+    break;
+  }
+  case "themes":
+    for (const t of store.listClientThemes()) console.log(`client:${t.key}  v${t.version}  ${t.client}  [${Object.keys(t.text).join(",")}]`);
+    break;
   case "set-chat": {
     const g = find(a);
     if (!b || !Number.isInteger(Number(b))) throw new Error("usage: set-chat <booking> <telegram-chat-id>");
@@ -143,6 +168,6 @@ switch (cmd) {
     break;
   }
   default:
-    console.log("commands: quote | list | show <booking> | sync | set-chat <booking> <chat-id> | cancel <booking> <reason> | forget-contact <booking>");
+    console.log("commands: quote | list | show <booking> | sync | set-chat <booking> <chat-id> | cancel <booking> <reason> | forget-contact <booking> | theme <file.json> | themes");
 }
 store.close();

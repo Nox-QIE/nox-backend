@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { esc, T, type Lang } from "./i18n.js";
 import { GameRoom, type Reply, type RoomDeps } from "./room.js";
 import { safeName } from "./names.js";
+import type { AgentRecord } from "./agents.js";
 import type { Scenario } from "./scenarios.js";
 
 type Deps = Omit<RoomDeps, "onClosed">;
@@ -58,7 +59,14 @@ export class Registry {
    * `scenario` starts a Scam Shield game ("/newgame scamshield"); `prepaid` is a booked Game Night,
    * already paid by the client, so its host needs no Host Pass for themes, agents or a big lobby.
    */
-  async create(chatId: number, hostId: number, hostName: string, lang: Lang, opts: { agentId?: number; scenario?: Scenario; prepaid?: boolean } = {}): Promise<Reply> {
+  async create(
+    chatId: number,
+    hostId: number,
+    hostName: string,
+    lang: Lang,
+    /** `privateAgents`: Game Masters only this lobby offers (a client's own theme, F04-S05). */
+    opts: { agentId?: number; scenario?: Scenario; prepaid?: boolean; privateAgents?: AgentRecord[] } = {},
+  ): Promise<Reply> {
     const t = T[lang];
     if (this.byChat.has(chatId)) return { ok: false, text: t.gameExists };
     if (this.byUser.has(hostId)) return { ok: false, text: t.inOtherGame };
@@ -66,14 +74,20 @@ export class Registry {
     if (!this.startedUsers.has(hostId)) return { ok: false, text: t.needStart(esc(safeName(hostName, 1, lang)), this.deps.botUsername) };
     // A theme picked with /newgame is a premium Game Master too.
     if (!opts.prepaid && opts.agentId !== undefined && this.deps.hostPass && !(await this.deps.hostPass(hostId))) return { ok: false, text: t.passNeeded };
-    const { hostPass, ...deps } = this.deps;
+    const { hostPass, agents, ...deps } = this.deps;
+    const own = opts.privateAgents ?? [];
     const room = new GameRoom(
       this.newId(),
       chatId,
       hostId,
       hostName,
       lang,
-      { ...deps, ...(hostPass && !opts.prepaid ? { hostPass } : {}), onClosed: (r) => this.forget(r) },
+      {
+        ...deps,
+        ...(hostPass && !opts.prepaid ? { hostPass } : {}),
+        ...(agents || own.length ? { agents: () => [...own, ...(agents?.() ?? [])] } : {}),
+        onClosed: (r) => this.forget(r),
+      },
       opts.scenario ?? null,
     );
     this.rooms.set(room.id, room);

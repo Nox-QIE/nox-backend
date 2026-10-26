@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { Hex } from "viem";
 import { AGENT_TERMS, type AgentRecord, type Persona } from "./agents.js";
 import type { Booking, BookingStatus } from "./bookings.js";
+import type { ClientTheme } from "./client-themes.js";
 import type { LedgerNightReveal, LedgerRoleReveal } from "./chain/ledger.js";
 import type { TxRecord } from "./chain/viem-ledger.js";
 import type { NarratorReport } from "./narrator.js";
@@ -97,6 +98,10 @@ export interface Store {
   /** Group notices already sent for a booking ("24h", "1h", "open"), F04-S06. */
   bookingNotices(id: string): string[];
   addBookingNotice(id: string, notice: string): void;
+  /** Client themes (F04-S05): saving an existing key with new text replaces it and raises its version. */
+  saveClientTheme(t: Omit<ClientTheme, "version">): { rowId: number; version: number };
+  getClientTheme(key: string): (ClientTheme & { rowId: number }) | null;
+  listClientThemes(): (ClientTheme & { rowId: number })[];
   recordOperatorBalance(wei: bigint): void;
   /** AI use per finished game (F09-D05). */
   recordGmGame(g: { gameId: Hex | null; agentId: number | null; players: number; report: NarratorReport }): void;
@@ -249,6 +254,14 @@ export class SqliteStore implements Store {
         note TEXT,
         created_at INTEGER NOT NULL,
         notices TEXT NOT NULL DEFAULT ''
+      );
+      CREATE TABLE IF NOT EXISTS client_themes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        key TEXT NOT NULL UNIQUE,
+        client TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        text TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS operator_balances (at INTEGER PRIMARY KEY, wei TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS gm_games (
@@ -487,6 +500,29 @@ export class SqliteStore implements Store {
   addBookingNotice(id: string, notice: string) {
     const all = [...new Set([...this.bookingNotices(id), notice])].join(",");
     this.db.prepare("UPDATE bookings SET notices = ? WHERE lower(id) = ?").run(all, id.toLowerCase());
+  }
+
+  saveClientTheme(t: Omit<ClientTheme, "version">) {
+    const old = this.getClientTheme(t.key);
+    // Saving the same text again changes nothing, so it keeps its version.
+    if (old && old.client === t.client && JSON.stringify(old.text) === JSON.stringify(t.text)) return { rowId: old.rowId, version: old.version };
+    const version = old ? old.version + 1 : 1;
+    if (old) this.db.prepare("UPDATE client_themes SET client = ?, version = ?, text = ?, updated_at = ? WHERE id = ?").run(t.client, version, JSON.stringify(t.text), Date.now(), old.rowId);
+    else this.db.prepare("INSERT INTO client_themes (key, client, version, text, updated_at) VALUES (?, ?, ?, ?, ?)").run(t.key, t.client, version, JSON.stringify(t.text), Date.now());
+    return { rowId: old?.rowId ?? this.getClientTheme(t.key)!.rowId, version };
+  }
+
+  private toClientTheme(r: Record<string, string | number>): ClientTheme & { rowId: number } {
+    return { rowId: Number(r.id), key: r.key as string, client: r.client as string, version: Number(r.version), text: JSON.parse(r.text as string) as ClientTheme["text"] };
+  }
+
+  getClientTheme(key: string) {
+    const r = this.db.prepare("SELECT * FROM client_themes WHERE key = ?").get(key) as Record<string, string | number> | undefined;
+    return r ? this.toClientTheme(r) : null;
+  }
+
+  listClientThemes() {
+    return (this.db.prepare("SELECT * FROM client_themes ORDER BY key").all() as Record<string, string | number>[]).map((r) => this.toClientTheme(r));
   }
 
   forgetUser(userId: number) {

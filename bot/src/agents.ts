@@ -1,3 +1,4 @@
+import type { Role } from "@nox/shared/engine";
 import { contentProblem } from "./gm/guard.js";
 import type { Persona } from "./gm/prompt.js";
 import type { Lang } from "./i18n.js";
@@ -18,6 +19,10 @@ export interface AgentRecord {
   endpoint?: string | null;
   /** Version of the agent terms (docs/agent-terms.md) the owner accepted; null when never recorded. */
   termsVersion?: number | null;
+  /** Custom role names (client themes, F04-S05); missing roles keep Nox's names. */
+  roles?: Partial<Record<Role, string>>;
+  /** Content reference for the committed config, when the GM is versioned content (client themes). */
+  ref?: { id: string; version: number };
 }
 
 /**
@@ -36,7 +41,7 @@ const LIMITS = { name: [2, 32], tagline: [0, 80], style: [40, 1200], example: [0
  * Automatic checks before an operator reviews a persona: sizes, languages, and the same content
  * rules as narration (no links, markup, @mentions or money talk). Returns a list of problems.
  */
-export function checkPersona(p: Persona): string[] {
+export function checkPersona(p: Persona, o: { brand?: boolean } = {}): string[] {
   const problems: string[] = [];
   const len = (field: string, v: string, [min, max]: readonly [number, number]) => {
     if (v.trim().length < min || v.length > max) problems.push(`${field} must be ${min}–${max} characters`);
@@ -51,7 +56,8 @@ export function checkPersona(p: Persona): string[] {
     const problem = contentProblem(text);
     if (problem) problems.push(`${field}: no ${problem}`);
   }
-  for (const [field, text] of [["name", p.name], ["tagline", p.tagline]] as const) {
+  // A client's own theme may carry its brand (client themes); Marketplace agents may not pose as anyone.
+  for (const [field, text] of o.brand ? [] : ([["name", p.name], ["tagline", p.tagline]] as const)) {
     const word = IMPERSONATION.exec(text)?.[1];
     if (word) problems.push(`${field}: may not pose as Nox, QIE, Telegram or staff ("${word}")`);
   }
