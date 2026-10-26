@@ -25,6 +25,18 @@ export interface FinalizePayload extends GameSecret {
   winner: number;
 }
 
+/** Discussion activity over finished games (F07-D06). Only games whose group messages could be counted carry messages. */
+export interface DiscussionStats {
+  games: number;
+  /** Games where the bot could see group messages (Telegram privacy mode off). */
+  countedGames: number;
+  discussions: number;
+  messages: number;
+  /** Discussions with no message at all. */
+  quietDiscussions: number;
+  nudges: number;
+}
+
 /** A finished Scam Shield game: the scenario (key@version), its size, group and outcome. */
 export interface ScenarioGame {
   scenario: string;
@@ -88,7 +100,9 @@ export interface Store {
   /** Every finished game (agentId null = Nox's own GM): the input for monthly agent revenue settlement. */
   /** `chatId` (the Telegram group) feeds the Game Night engagement report; it identifies a group, not a person. */
   /** `scenario` (Scam Shield key) and `winner` feed the sponsor report (F10-D04). */
-  recordFinishedGame(g: { agentId: number | null; players: number; hostId: number; chainGameId: Hex | null; chatId?: number; scenario?: string | null; winner?: string | null }): void;
+  recordFinishedGame(g: { agentId: number | null; players: number; hostId: number; chainGameId: Hex | null; chatId?: number; scenario?: string | null; winner?: string | null; discussion?: number[] | null; nudges?: number }): void;
+  /** Discussion activity (F07-D06): messages per discussion and nudges, counts only. */
+  discussionStats(fromMs: number, toMs: number): DiscussionStats;
   /** Finished Scam Shield games in [fromMs, toMs): counts only, for sponsors. */
   scenarioGames(fromMs: number, toMs: number): ScenarioGame[];
   finishedGames(fromMs: number, toMs: number): FinishedGame[];
@@ -347,6 +361,8 @@ export class SqliteStore implements Store {
     for (const [c, type] of [["fiat_currency", "TEXT"], ["fiat_amount", "INTEGER"], ["receipt_hash", "TEXT"]]) if (!bkCols.has(c!)) this.db.exec(`ALTER TABLE bookings ADD COLUMN ${c} ${type}`);
     if (!fgCols.has("scenario")) this.db.exec("ALTER TABLE finished_games ADD COLUMN scenario TEXT");
     if (!fgCols.has("winner")) this.db.exec("ALTER TABLE finished_games ADD COLUMN winner TEXT");
+    if (!fgCols.has("discussion")) this.db.exec("ALTER TABLE finished_games ADD COLUMN discussion TEXT");
+    if (!fgCols.has("nudges")) this.db.exec("ALTER TABLE finished_games ADD COLUMN nudges INTEGER");
   }
 
   close() {
@@ -658,10 +674,35 @@ export class SqliteStore implements Store {
     this.db.prepare("UPDATE agents SET chain_agent_id = ? WHERE id = ?").run(chainAgentId, id);
   }
 
-  recordFinishedGame(g: { agentId: number | null; players: number; hostId: number; chainGameId: Hex | null; chatId?: number; scenario?: string | null; winner?: string | null }) {
+  recordFinishedGame(g: {
+    agentId: number | null;
+    players: number;
+    hostId: number;
+    chainGameId: Hex | null;
+    chatId?: number;
+    scenario?: string | null;
+    winner?: string | null;
+    discussion?: number[] | null;
+    nudges?: number;
+  }) {
     this.db
-      .prepare("INSERT INTO finished_games (agent_id, players, host_id, chain_game_id, ended_at, chat_id, scenario, winner) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(g.agentId, g.players, g.hostId, g.chainGameId, Date.now(), g.chatId ?? null, g.scenario ?? null, g.winner ?? null);
+      .prepare("INSERT INTO finished_games (agent_id, players, host_id, chain_game_id, ended_at, chat_id, scenario, winner, discussion, nudges) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(g.agentId, g.players, g.hostId, g.chainGameId, Date.now(), g.chatId ?? null, g.scenario ?? null, g.winner ?? null, g.discussion ? JSON.stringify(g.discussion) : null, g.nudges ?? null);
+  }
+
+  discussionStats(fromMs: number, toMs: number): DiscussionStats {
+    const rows = this.db.prepare("SELECT discussion, nudges FROM finished_games WHERE ended_at >= ? AND ended_at < ?").all(fromMs, toMs) as { discussion: string | null; nudges: number | null }[];
+    const counted = rows.filter((r) => r.discussion !== null).map((r) => JSON.parse(r.discussion!) as number[]);
+    const discussions = counted.reduce((n, d) => n + d.length, 0);
+    const messages = counted.reduce((n, d) => n + d.reduce((a, b) => a + b, 0), 0);
+    return {
+      games: rows.length,
+      countedGames: counted.length,
+      discussions,
+      messages,
+      quietDiscussions: counted.reduce((n, d) => n + d.filter((m) => m === 0).length, 0),
+      nudges: rows.reduce((n, r) => n + (r.nudges ?? 0), 0),
+    };
   }
 
   scenarioGames(fromMs: number, toMs: number): ScenarioGame[] {
