@@ -132,7 +132,19 @@ export interface Store {
   addBooking(b: Booking): void;
   getBooking(id: string): Booking | null;
   listBookings(): Booking[];
-  updateBooking(id: string, u: { status?: BookingStatus; paidTx?: string | null; note?: string | null; chatId?: number | null; contact?: string | null; receiptHash?: string | null }): void;
+  updateBooking(
+    id: string,
+    u: {
+      status?: BookingStatus;
+      paidTx?: string | null;
+      note?: string | null;
+      chatId?: number | null;
+      contact?: string | null;
+      receiptHash?: string | null;
+      ownerShareIdr?: number | null;
+      payoutRef?: string | null;
+    },
+  ): void;
   /** Group notices already sent for a booking ("24h", "1h", "open"), F04-S06. */
   bookingNotices(id: string): string[];
   addBookingNotice(id: string, notice: string): void;
@@ -296,7 +308,9 @@ export class SqliteStore implements Store {
         notices TEXT NOT NULL DEFAULT '',
         fiat_currency TEXT,
         fiat_amount INTEGER,
-        receipt_hash TEXT
+        receipt_hash TEXT,
+        owner_share_idr INTEGER,
+        payout_ref TEXT
       );
       CREATE TABLE IF NOT EXISTS client_themes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -384,7 +398,14 @@ export class SqliteStore implements Store {
     const fgCols = new Set((this.db.prepare("PRAGMA table_info(finished_games)").all() as { name: string }[]).map((c) => c.name));
     if (!fgCols.has("chat_id")) this.db.exec("ALTER TABLE finished_games ADD COLUMN chat_id INTEGER");
     const bkCols = new Set((this.db.prepare("PRAGMA table_info(bookings)").all() as { name: string }[]).map((c) => c.name));
-    for (const [c, type] of [["fiat_currency", "TEXT"], ["fiat_amount", "INTEGER"], ["receipt_hash", "TEXT"]]) if (!bkCols.has(c!)) this.db.exec(`ALTER TABLE bookings ADD COLUMN ${c} ${type}`);
+    for (const [c, type] of [
+      ["fiat_currency", "TEXT"],
+      ["fiat_amount", "INTEGER"],
+      ["receipt_hash", "TEXT"],
+      ["owner_share_idr", "INTEGER"],
+      ["payout_ref", "TEXT"],
+    ])
+      if (!bkCols.has(c!)) this.db.exec(`ALTER TABLE bookings ADD COLUMN ${c} ${type}`);
     const agCols = new Set((this.db.prepare("PRAGMA table_info(agent_games)").all() as { name: string }[]).map((c) => c.name));
     if (!agCols.has("endpoint_calls")) this.db.exec("ALTER TABLE agent_games ADD COLUMN endpoint_calls INTEGER");
     if (!agCols.has("endpoint_errors")) this.db.exec("ALTER TABLE agent_games ADD COLUMN endpoint_errors INTEGER");
@@ -582,6 +603,8 @@ export class SqliteStore implements Store {
       decimals: Number(r.decimals),
       fiat: r.fiat_currency ? { currency: r.fiat_currency as "IDR", amount: Number(r.fiat_amount) } : null,
       receiptHash: (r.receipt_hash as Hex | null) ?? null,
+      ownerShareIdr: r.owner_share_idr == null ? null : Number(r.owner_share_idr),
+      payoutRef: (r.payout_ref as string | null) ?? null,
       status: r.status as BookingStatus,
       paidTx: (r.paid_tx as Hex | null) ?? null,
       note: (r.note as string | null) ?? null,
@@ -598,8 +621,29 @@ export class SqliteStore implements Store {
     return (this.db.prepare("SELECT * FROM bookings ORDER BY starts_at, id").all() as Record<string, string | number | null>[]).map((r) => this.toBooking(r));
   }
 
-  updateBooking(id: string, u: { status?: BookingStatus; paidTx?: string | null; note?: string | null; chatId?: number | null; contact?: string | null; receiptHash?: string | null }) {
-    const cols: Record<string, keyof typeof u> = { status: "status", paid_tx: "paidTx", note: "note", chat_id: "chatId", contact: "contact", receipt_hash: "receiptHash" };
+  updateBooking(
+    id: string,
+    u: {
+      status?: BookingStatus;
+      paidTx?: string | null;
+      note?: string | null;
+      chatId?: number | null;
+      contact?: string | null;
+      receiptHash?: string | null;
+      ownerShareIdr?: number | null;
+      payoutRef?: string | null;
+    },
+  ) {
+    const cols: Record<string, keyof typeof u> = {
+      status: "status",
+      paid_tx: "paidTx",
+      note: "note",
+      chat_id: "chatId",
+      contact: "contact",
+      receipt_hash: "receiptHash",
+      owner_share_idr: "ownerShareIdr",
+      payout_ref: "payoutRef",
+    };
     const set = Object.entries(cols).filter(([, k]) => u[k] !== undefined);
     if (!set.length) return;
     this.db
