@@ -5,7 +5,7 @@ import { TemplateNarrator } from "../src/narrator.js";
 import { Registry } from "../src/registry.js";
 import { buildReport, isoWeek, reportMarkdown, type ReportGame } from "../src/report.js";
 import { SqliteStore } from "../src/store.js";
-import { FakeMessenger, FakeScheduler } from "./fakes.js";
+import { FakeMessenger, FakeScheduler, tempDbPath } from "./fakes.js";
 
 const ts = (iso: string) => Date.parse(iso) / 1000;
 const w = (n: number) => `0x${n.toString(16).padStart(40, "0")}` as Address;
@@ -67,7 +67,7 @@ describe("engagement report (F04-S07, F04-D02, F04-D05)", () => {
 
 describe("store: games per group", () => {
   it("records the group of each finished game, and upgrades old databases", () => {
-    const path = `/private/tmp/claude-502/-Users-Shenhan-HansProject-QIE-Hackathon/199d2360-1772-4826-befe-463dcde0d129/scratchpad/fg-${Date.now()}.db`;
+    const path = tempDbPath("fg");
     const old = new DatabaseSync(path);
     old.exec("CREATE TABLE finished_games (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id INTEGER, players INTEGER NOT NULL, host_id INTEGER NOT NULL, chain_game_id TEXT, ended_at INTEGER NOT NULL)");
     old.close();

@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Keyboard, Messenger, Scheduler } from "../src/ports.js";
 
 export interface Sent {
@@ -54,4 +57,9 @@ export class FakeScheduler implements Scheduler {
     }
     await new Promise((r) => setTimeout(r, 0));
   }
+}
+
+/** A fresh SQLite file path in the OS temp folder (works on any machine and in CI). */
+export function tempDbPath(name: string): string {
+  return join(mkdtempSync(join(tmpdir(), "nox-test-")), `${name}.db`);
 }

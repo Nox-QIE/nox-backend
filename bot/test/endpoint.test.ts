@@ -5,6 +5,7 @@ import { LlmNarrator } from "../src/gm/llm-narrator.js";
 import type { GmCompletion, GmModel } from "../src/gm/model.js";
 import { userPrompt } from "../src/gm/prompt.js";
 import { SqliteStore } from "../src/store.js";
+import { tempDbPath } from "./fakes.js";
 
 describe("SSRF guard (F18-D03)", () => {
   it("only public unicast addresses are allowed", () => {
@@ -133,7 +134,7 @@ describe("endpoint agents in the store (F18-D01)", () => {
   const persona = { name: "Rogue", tagline: "", style: "x".repeat(50), examples: [], langs: ["en" as const] };
 
   it("keeps the signing secret encrypted", () => {
-    const path = `/private/tmp/claude-502/-Users-Shenhan-HansProject-QIE-Hackathon/199d2360-1772-4826-befe-463dcde0d129/scratchpad/ep-${Date.now()}.db`;
+    const path = tempDbPath("ep");
     const store = new SqliteStore(path, Buffer.alloc(32, 9));
     const secret = "cd".repeat(32);
     const id = store.addEndpointAgent("0x00000000000000000000000000000000000a9e01", persona, "https://agent.example.com/gm", secret);
@@ -146,7 +147,7 @@ describe("endpoint agents in the store (F18-D01)", () => {
   });
 
   it("upgrades a database created before endpoint agents", () => {
-    const path = `/private/tmp/claude-502/-Users-Shenhan-HansProject-QIE-Hackathon/199d2360-1772-4826-befe-463dcde0d129/scratchpad/old-${Date.now()}.db`;
+    const path = tempDbPath("old");
     const old = new DatabaseSync(path);
     old.exec("CREATE TABLE agents (id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT NOT NULL, persona TEXT NOT NULL, status TEXT NOT NULL, chain_agent_id INTEGER, created_at INTEGER NOT NULL)");
     old.prepare("INSERT INTO agents (owner, persona, status, created_at) VALUES (?, ?, 'active', 0)").run("0xabc", JSON.stringify(persona));

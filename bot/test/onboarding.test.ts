@@ -12,7 +12,7 @@ import { Registry } from "../src/registry.js";
 import { SqliteStore } from "../src/store.js";
 import { startReply, statsFromApi } from "../src/telegram.js";
 import { ben, CREDITS, FakeChain, GAME, playGame } from "./chain-fakes.js";
-import { FakeMessenger, FakeScheduler } from "./fakes.js";
+import { FakeMessenger, FakeScheduler, tempDbPath } from "./fakes.js";
 
 const ledger: GameLedger = { ...noLedger, enabled: true, addressOf: (u) => `0x${u.toString(16).padStart(40, "0")}` as `0x${string}` };
 
@@ -65,7 +65,7 @@ describe("onboarding (F01-S01, F01-D01, F01-S06, F01-S09)", () => {
   });
 
   it("works without a chain (no address) and upgrades old databases", async () => {
-    const path = `/private/tmp/claude-502/-Users-Shenhan-HansProject-QIE-Hackathon/199d2360-1772-4826-befe-463dcde0d129/scratchpad/users-${Date.now()}.db`;
+    const path = tempDbPath("users");
     const old = new DatabaseSync(path);
     old.exec("CREATE TABLE users (telegram_id INTEGER PRIMARY KEY, started_at INTEGER NOT NULL)");
     old.prepare("INSERT INTO users VALUES (5, 1)").run();
