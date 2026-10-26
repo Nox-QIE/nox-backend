@@ -1,10 +1,12 @@
 /**
  * Event indexer service (F12-S01): keeps data/index.db in step with the Nox contracts on the chain
- * in .env. Read-only: needs NOX_CHAIN, NOX_GAME_ADDRESS and the deploy block, no keys.
- *   npm run indexer            (keeps polling; Ctrl+C to stop)
+ * in .env and serves the public read-only API (F12-D05) on NOX_API_PORT (default 8787, "off" to
+ * disable). Read-only: needs NOX_CHAIN, NOX_GAME_ADDRESS and the deploy block, no keys.
+ *   npm run indexer            (keeps polling and serving; Ctrl+C to stop)
  *   npm run indexer -- --once  (catch up once, print stats and exit)
  */
 import { createPublicClient, type Abi } from "viem";
+import { createApi } from "../src/api.js";
 import { loadIndexerConfig } from "../src/config.js";
 import { NoxAgentRegistryAbi, NoxCreditsAbi, NoxGameAbi, NoxPaymentsAbi } from "../src/chain/contracts.js";
 import { EventIndexer, EventStore, type IndexedContract, type IndexerClient } from "../src/chain/indexer.js";
@@ -32,9 +34,19 @@ if (process.argv.includes("--once")) {
   log({ event: "index_synced", events: r.events, block: r.block.toString(), stats: store.stats() });
   store.close();
 } else {
+  const api = c.api ? createApi({ store, network: c.network, chainId: chain.id, trustProxy: c.api.trustProxy, ratePerMinute: c.api.ratePerMinute, log }) : null;
+  api?.on("error", (err) => {
+    log({ event: "api_error", error: err.message });
+    process.exit(1);
+  });
+  if (c.api && api) api.listen(c.api.port, c.api.host, () => log({ event: "api_listening", url: `http://${c.api!.host}:${c.api!.port}/v1/health` }));
   let stopping = false;
-  process.on("SIGINT", () => (stopping = true));
-  process.on("SIGTERM", () => (stopping = true));
+  const stop = () => {
+    stopping = true;
+    api?.close();
+  };
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
   while (!stopping) {
     try {
       const r = await indexer.syncOnce();

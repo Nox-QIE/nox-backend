@@ -182,6 +182,114 @@ export class EventStore {
     )[0];
     return BigInt(r?.n ?? 0);
   }
+
+  /** Highest block the index has fully scanned (0 before the first sync). */
+  indexedBlock(): number {
+    return Number(this.rows("SELECT COALESCE(MAX(block), 0) AS n FROM chain_checkpoints")[0]?.n ?? 0);
+  }
+
+  /** Newest games first; `beforeBlock` pages back through older ones. */
+  games(limit = 20, beforeBlock?: number): GameSummary[] {
+    return this.summaries("c.block < ?", beforeBlock ?? Number.MAX_SAFE_INTEGER, limit);
+  }
+
+  game(gameId: Hex): GameSummary | null {
+    return this.summaries("c.game_id = ?", gameId.toLowerCase(), 1)[0] ?? null;
+  }
+
+  private summaries(where: string, param: string | number, limit: number): GameSummary[] {
+    return this.rows(
+      `SELECT c.game_id, c.block, c.ts,
+              (SELECT COUNT(*) FROM chain_events j WHERE j.game_id = c.game_id AND j.event = 'PlayerJoined') AS players,
+              f.ts AS finalized_ts, CAST(json_extract(f.args, '$.winner') AS INTEGER) AS winner,
+              x.ts AS cancelled_ts, json_extract(x.args, '$.reason') AS reason
+       FROM chain_events c
+       LEFT JOIN chain_events f ON f.game_id = c.game_id AND f.event = 'GameFinalized'
+       LEFT JOIN chain_events x ON x.game_id = c.game_id AND x.event = 'GameCancelled'
+       WHERE c.event = 'GameCreated' AND ${where}
+       ORDER BY c.block DESC, c.log_index DESC LIMIT ?`,
+      param,
+      limit,
+    ).map(toGameSummary);
+  }
+
+  /** One player's history, all from public events: joins, revealed roles, results, credits, signed txs. */
+  player(account: Address) {
+    const a = account.toLowerCase();
+    const games = this.rows(
+      `SELECT j.game_id, j.block, j.ts, CAST(json_extract(r.args, '$.role') AS INTEGER) AS role,
+              CAST(json_extract(f.args, '$.winner') AS INTEGER) AS winner,
+              (SELECT COUNT(*) FROM chain_events x WHERE x.game_id = j.game_id AND x.event = 'GameCancelled') AS cancelled
+       FROM chain_events j
+       LEFT JOIN chain_events r ON r.game_id = j.game_id AND r.event = 'RoleRevealed' AND r.account = j.account
+       LEFT JOIN chain_events f ON f.game_id = j.game_id AND f.event = 'GameFinalized'
+       WHERE j.event = 'PlayerJoined' AND j.account = ?
+       ORDER BY j.block DESC`,
+      a,
+    ).map((r) => {
+      const role = r.role === null ? null : Number(r.role);
+      const winner = r.winner === null ? null : Number(r.winner);
+      return {
+        gameId: r.game_id as Hex,
+        block: Number(r.block),
+        ts: Number(r.ts),
+        role: role === null ? null : ROLE_NAMES[role] ?? null,
+        status: winner !== null ? "finalized" : Number(r.cancelled) ? "cancelled" : "running",
+        won: role !== null && winner !== null ? (role === 2 ? 2 : 1) === winner : null,
+      };
+    });
+    const signed = this.rows(
+      "SELECT COUNT(DISTINCT tx_hash) AS n FROM chain_events WHERE account = ? AND event IN ('PlayerJoined', 'NightActionCommitted', 'VoteCast')",
+      a,
+    )[0];
+    return {
+      account: a as Address,
+      credits: Number(this.creditsOf(account)),
+      games: games.length,
+      finished: games.filter((g) => g.status === "finalized").length,
+      wins: games.filter((g) => g.won).length,
+      signedTxs: Number(signed?.n ?? 0),
+      history: games,
+    };
+  }
+
+  /** Distinct player wallets that signed a game transaction, per UTC day, for days since `fromTs`. */
+  dailySigners(fromTs: number): { day: string; players: number }[] {
+    return this.rows(
+      `SELECT date(ts, 'unixepoch') AS day, COUNT(DISTINCT account) AS players FROM chain_events
+       WHERE event IN ('PlayerJoined', 'NightActionCommitted', 'VoteCast') AND ts >= ?
+       GROUP BY day ORDER BY day`,
+      fromTs,
+    ).map((r) => ({ day: r.day as string, players: Number(r.players) }));
+  }
+}
+
+const ROLE_NAMES: Record<number, string> = { 1: "villager", 2: "werewolf", 3: "seer", 4: "doctor" };
+
+export interface GameSummary {
+  gameId: Hex;
+  block: number;
+  ts: number;
+  players: number;
+  status: "running" | "finalized" | "cancelled";
+  /** "village" | "wolves" once finalized. */
+  winner: "village" | "wolves" | null;
+  endedTs: number | null;
+  cancelReason: string | null;
+}
+
+function toGameSummary(r: Record<string, string | number | null>): GameSummary {
+  const winner = r.winner === null ? null : Number(r.winner) === 2 ? "wolves" : "village";
+  return {
+    gameId: r.game_id as Hex,
+    block: Number(r.block),
+    ts: Number(r.ts),
+    players: Number(r.players),
+    status: r.finalized_ts !== null ? "finalized" : r.cancelled_ts !== null ? "cancelled" : "running",
+    winner,
+    endedTs: r.finalized_ts !== null ? Number(r.finalized_ts) : r.cancelled_ts !== null ? Number(r.cancelled_ts) : null,
+    cancelReason: (r.reason as string | null) ?? null,
+  };
 }
 
 export interface IndexerOptions {

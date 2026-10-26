@@ -180,6 +180,8 @@ export interface IndexerConfig {
   confirmations: bigint;
   dbPath: string;
   pollMs: number;
+  /** Public read-only API; null = off. Binds to localhost by default (put a reverse proxy in front). */
+  api: { port: number; host: string; trustProxy: boolean; ratePerMinute: number } | null;
 }
 
 /** The indexer only reads public chain data, so it needs no operator key or wallet secret. */
@@ -202,7 +204,15 @@ export function loadIndexerConfig(env: NodeJS.ProcessEnv = process.env): Indexer
     confirmations: BigInt(confirmations),
     dbPath: env.NOX_INDEX_DB_PATH || "data/index.db",
     pollMs: seconds(env, "NOX_INDEX_POLL_SECONDS", 10_000),
+    api: null,
   };
+  if (env.NOX_API_PORT !== "off") {
+    const port = Number(env.NOX_API_PORT || 8787);
+    const rate = Number(env.NOX_API_RATE_PER_MINUTE || 120);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('NOX_API_PORT must be a port number or "off"');
+    if (!Number.isInteger(rate) || rate < 1) throw new Error("NOX_API_RATE_PER_MINUTE must be a whole number ≥ 1");
+    c.api = { port, host: env.NOX_API_HOST || "127.0.0.1", trustProxy: env.NOX_API_TRUST_PROXY === "1", ratePerMinute: rate };
+  }
   const registry = address("NOX_AGENT_REGISTRY_ADDRESS");
   const payments = address("NOX_PAYMENTS_ADDRESS");
   if (registry) c.agentRegistryAddress = registry;
