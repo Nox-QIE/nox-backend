@@ -8,6 +8,8 @@ Backend Nox: bot Telegram, ledger on-chain, indexer event, dan API publik.
 | `bot/scripts/` | CLI operator: laporan, booking Game Night, pass, agent, settlement, rekonsiliasi, backup, rotasi kunci, simulasi |
 | `bot/test/` | Tes unit + e2e anvil (`vitest`) |
 | `docs/` | Arsitektur, model data, kontrak data, metrik, anti-cheat, syarat agent, kebijakan data LLM, ADR |
+| `agents/` | Contoh persona untuk `agents.ts add` |
+| `worker/`, `db/` | Hanya penunjuk: kode worker ada di `bot/src/chain/`, data ada di SQLite (lihat `docs/data-model.md`) |
 
 Memakai [`nox-shared`](https://github.com/Nox-QIE/nox-shared) untuk aturan game, crypto-spec, dan config. Bagian dari [Nox](https://github.com/Nox-QIE).
 
