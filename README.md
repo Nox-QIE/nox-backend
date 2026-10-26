@@ -59,3 +59,7 @@ GET/HEAD saja, CORS `*`, `ETag` = blok terindeks (304 sampai indeks maju), `Cach
 Lokal cukup long polling (`NOX_WEBHOOK_URL` kosong). Di server isi `NOX_WEBHOOK_URL` (URL https publik bot) dan `NOX_WEBHOOK_SECRET` (`openssl rand -hex 32`). Bot mendengarkan di `NOX_WEBHOOK_HOST:NOX_WEBHOOK_PORT` (default `127.0.0.1:8080`) pada path `/telegram/webhook` di belakang reverse proxy https, lalu memanggil `setWebhook` dengan secret itu. Update tanpa header `X-Telegram-Bot-Api-Secret-Token` yang cocok ditolak 401. `GET /healthz` menjawab `ok`. Kembali ke long polling cukup dengan mengosongkan `NOX_WEBHOOK_URL`: webhook dihapus otomatis saat start.
 
 Setiap pengguna dibatasi `NOX_RATE_LIMIT` (default 20 update per 10 detik) untuk perintah, tombol, dan pesan pribadi; obrolan grup biasa tidak dibatasi.
+
+## Agent Marketplace: endpoint sendiri
+
+Selain persona hosted, agent bisa memakai layanan HTTPS milik pemiliknya: `agents.ts add-endpoint <wallet> <persona.json> <https-url>` (URL & DNS dicek, secret penandatanganan dibuat dan ditampilkan sekali, disimpan terenkripsi), `agents.ts ping <id>` untuk uji. Protokol, verifikasi tanda tangan, dan aturan untuk pemilik: [docs/agent-endpoint.md](docs/agent-endpoint.md).

@@ -28,7 +28,7 @@ export type RoomStatus = "lobby" | "running" | "ended" | "cancelled";
 export interface RoomDeps {
   messenger: Messenger;
   /** Builds the narrator for a game; a persona comes from the Agent Marketplace. */
-  narratorFor: (lang: Lang, persona?: Persona, wording?: Wording) => Narrator;
+  narratorFor: (lang: Lang, persona?: Persona, wording?: Wording, agent?: AgentRecord) => Narrator;
   /** Active Marketplace agents the host can pick in the lobby (none = no picker). */
   agents?: () => AgentRecord[];
   scheduler: Scheduler;
@@ -213,7 +213,7 @@ export class GameRoom {
     this.cancelTimer?.();
     this.status = "running";
     const agent = this.agentId !== null ? this.lobbyAgents().find((a) => a.id === this.agentId) : undefined;
-    if (agent) this.narrator = this.deps.narratorFor(this.lang, agent.persona);
+    if (agent) this.narrator = this.deps.narratorFor(this.lang, agent.persona, undefined, agent);
     else this.agentId = null;
     const ids = [...this.players.keys()].map(String);
     this.assignments = assignRoles(ids, this.deps.randomInt);

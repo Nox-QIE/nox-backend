@@ -14,6 +14,8 @@ export interface LlmNarratorOptions {
   price?: [number, number];
   /** Hosted persona from the Agent Marketplace; changes voice only, never rules or facts. */
   persona?: Persona;
+  /** Writes the persona layer instead of `model` (an agent's own endpoint, F18-S10); needs `persona`. */
+  personaModel?: GmModel;
   /** Scenario wording for the factual lines (Scam Shield). */
   wording?: Wording;
 }
@@ -78,18 +80,19 @@ export class LlmNarrator implements Narrator {
   private async flavor(beat: Beat, allowed: string[]): Promise<string | null> {
     const forbidden = this.names.filter((n) => !allowed.includes(n));
     // Persona first (two tries), then Nox's own voice (one try; two when there is no persona to try).
-    const layers: { system: string; tries: number; voice: "persona" | "nox" }[] =
+    const own = this.opts.model;
+    const layers: { system: string; tries: number; voice: "persona" | "nox"; model: GmModel }[] =
       this.noxSystem !== null && !this.stats.personaDemoted
         ? [
-            { system: this.system, tries: 2, voice: "persona" },
-            { system: this.noxSystem, tries: 1, voice: "nox" },
+            { system: this.system, tries: 2, voice: "persona", model: this.opts.personaModel ?? own },
+            { system: this.noxSystem, tries: 1, voice: "nox", model: own },
           ]
-        : [{ system: this.noxSystem ?? this.system, tries: 2, voice: "nox" }];
+        : [{ system: this.noxSystem ?? this.system, tries: 2, voice: "nox", model: own }];
     for (const layer of layers) {
       for (let attempt = 0; attempt < layer.tries; attempt++) {
         this.stats.calls++;
         try {
-          const r = await this.opts.model.complete(layer.system, userPrompt(beat), this.opts.timeoutMs);
+          const r = await layer.model.complete(layer.system, userPrompt(beat), this.opts.timeoutMs);
           addUsage(this.stats.usage, r.usage);
           addUsage((this.stats.byModel[r.model] ??= emptyUsage()), r.usage);
           const g = checkNarration(r.text, forbidden);
@@ -152,6 +155,7 @@ export class LlmNarrator implements Narrator {
   finish(): NarratorReport {
     let cost: number | null = 0;
     for (const [model, u] of Object.entries(this.stats.byModel)) {
+      if (model.startsWith("endpoint:")) continue; // an agent's own service costs Nox nothing
       const c = costUsd(model, u, this.opts.price);
       cost = c === null || cost === null ? null : cost + c;
     }
