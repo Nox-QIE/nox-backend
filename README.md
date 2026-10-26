@@ -19,6 +19,7 @@ Memakai [`nox-shared`](https://github.com/Nox-QIE/nox-shared) untuk aturan game,
 - Event unik per `(tx_hash, log_index)`, jadi menjalankan ulang tidak menggandakan data. Database bisa dihapus dan dibangun ulang dari chain.
 - `npm run indexer -- --once` mengejar sekali lalu mencetak statistik.
 - Setelah tiap sync yang menyimpan event (dan tiap jam, karena streak bisa putus seiring waktu) tabel `player_stats` (cermin D7: credits, game, menang, streak, rank) dibangun ulang.
+- Bila `NOX_PAYMENTS_ADDRESS` diisi, saldo pemilik agent (`ownerBalance`) dan treasury (`treasuryBalance`) juga dicocokkan dengan buku besar dari event (`payments_reconciled` / `payments_mismatch`).
 - Tiap `NOX_RECONCILE_MINUTES` credits terindeks dicocokkan dengan `NoxCredits.balanceOf` **di blok terindeks**; selisih atau mint untuk game yang tidak pernah finalize dicatat sebagai `credits_mismatch`.
 
 | Variabel | Default | Arti |
@@ -42,6 +43,7 @@ Memakai [`nox-shared`](https://github.com/Nox-QIE/nox-shared) untuk aturan game,
 | `GET /v1/games/<gameId>` | Ringkasan satu game + semua event-nya |
 | `GET /v1/players/<address>` | Credits, game, menang, tx ditandatangani, riwayat peran |
 | `GET /v1/daily?days=30` | Penanda tangan unik per hari UTC (maks 90) |
+| `GET /v1/agents/revenue` | Pendapatan agent Marketplace dari event NoxPayments: per agent (Game Night vs pool bulanan) dan per pemilik (dikreditkan, ditarik, terutang); jumlah dalam wei (string) |
 
 GET/HEAD saja, CORS `*`, `ETag` = blok terindeks (304 sampai indeks maju), `Cache-Control: public, max-age=5`, batas `NOX_API_RATE_PER_MINUTE` (default 120) per IP.
 

@@ -48,7 +48,9 @@ describe("public API", () => {
   it("serves stats, health and the leaderboard", async () => {
     const { get } = await setup();
     const health = await (await get("/v1/health")).json();
-    expect(health).toEqual({ ok: true, network: "testnet", chainId: 1983, indexedBlock: 500, reconciliation: null });
+    expect(health).toEqual({ ok: true, network: "testnet", chainId: 1983, indexedBlock: 500, reconciliation: null, paymentsReconciliation: null });
+    expect(await (await get("/v1/agents/revenue")).json()).toEqual({ agents: [], owners: [] });
+    expect((await get("/v1/agents")).status).toBe(404);
     const stats = await (await get("/v1/stats")).json();
     expect(stats).toMatchObject({ players: 3, finishedGames: 1, cancelledGames: 1, credits: 70, indexedBlock: 500 });
     const board = await (await get("/v1/leaderboard?limit=2")).json();

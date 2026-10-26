@@ -85,6 +85,13 @@ export class EventStore {
         last_day TEXT,
         rank INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS payment_reconciliations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        at INTEGER NOT NULL,
+        block INTEGER NOT NULL,
+        checked INTEGER NOT NULL,
+        mismatches TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS reconciliations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         at INTEGER NOT NULL,
@@ -281,6 +288,63 @@ export class EventStore {
     ).map((r) => ({ account: r.account as Address, gameId: r.game_id as Hex | null, amount: Number(r.amount), txHash: r.tx_hash as Hex }));
   }
 
+  /**
+   * Agent revenue and treasury ledger from NoxPayments events (F18-D05). Amounts are summed as bigints:
+   * 18-decimal token amounts overflow SQLite's 64-bit integers.
+   */
+  paymentLedger(): PaymentLedger {
+    const rows = this.rows(
+      `SELECT event, tx_hash, args FROM chain_events WHERE contract = 'NoxPayments'
+         AND event IN ('AgentCredited', 'Withdrawn', 'GameNightPaid', 'AgentPoolAllocated', 'PassPurchased', 'TreasuryWithdrawn')
+       ORDER BY block, log_index`,
+    ).map((r) => ({ event: r.event as string, tx: r.tx_hash as string, a: JSON.parse(r.args as string) as Record<string, string | number> }));
+    const big = (v: unknown) => BigInt(String(v ?? 0));
+    const addr = (v: unknown) => String(v).toLowerCase() as Address;
+    const poolTxs = new Set(rows.filter((r) => r.event === "AgentPoolAllocated").map((r) => r.tx));
+    const owners = new Map<string, OwnerLedger>();
+    const agents = new Map<string, AgentRevenue>();
+    const treasury = new Map<string, TreasuryLedger>();
+    const ownerRow = (owner: Address, token: Address) => {
+      const k = `${owner}|${token}`;
+      if (!owners.has(k)) owners.set(k, { owner, token, credited: 0n, withdrawn: 0n, owed: 0n });
+      return owners.get(k)!;
+    };
+    const treasuryRow = (token: Address) => {
+      if (!treasury.has(token)) treasury.set(token, { token, passes: 0n, gameNights: 0n, pool: 0n, withdrawn: 0n, balance: 0n });
+      return treasury.get(token)!;
+    };
+    for (const { event, tx, a } of rows) {
+      if (event === "AgentCredited") {
+        const owner = addr(a.owner);
+        const token = addr(a.token);
+        const amount = big(a.amount);
+        ownerRow(owner, token).credited += amount;
+        const k = `${a.agentId}|${owner}|${token}`;
+        const ag = agents.get(k) ?? { agentId: Number(a.agentId), owner, token, gameNights: 0n, pool: 0n, total: 0n };
+        if (poolTxs.has(tx)) ag.pool += amount;
+        else ag.gameNights += amount;
+        ag.total += amount;
+        agents.set(k, ag);
+      } else if (event === "Withdrawn") ownerRow(addr(a.account), addr(a.token)).withdrawn += big(a.amount);
+      else if (event === "PassPurchased") treasuryRow(addr(a.token)).passes += big(a.amount);
+      else if (event === "GameNightPaid") treasuryRow(addr(a.token)).gameNights += big(a.amount) - big(a.ownerShare);
+      else if (event === "AgentPoolAllocated") treasuryRow(addr(a.token)).pool += big(a.total);
+      else if (event === "TreasuryWithdrawn") treasuryRow(addr(a.token)).withdrawn += big(a.amount);
+    }
+    for (const o of owners.values()) o.owed = o.credited - o.withdrawn;
+    for (const t of treasury.values()) t.balance = t.passes + t.gameNights - t.pool - t.withdrawn;
+    return { owners: [...owners.values()], agents: [...agents.values()].sort((x, y) => x.agentId - y.agentId), treasury: [...treasury.values()] };
+  }
+
+  recordPaymentReconciliation(r: PaymentReconciliation) {
+    this.db.prepare("INSERT INTO payment_reconciliations (at, block, checked, mismatches) VALUES (?, ?, ?, ?)").run(r.at, r.block, r.checked, json(r.mismatches));
+  }
+
+  lastPaymentReconciliation(): PaymentReconciliation | null {
+    const r = this.rows("SELECT * FROM payment_reconciliations ORDER BY id DESC LIMIT 1")[0];
+    return r ? { at: Number(r.at), block: Number(r.block), checked: Number(r.checked), mismatches: JSON.parse(r.mismatches as string) as PaymentReconciliation["mismatches"] } : null;
+  }
+
   recordReconciliation(r: Reconciliation) {
     this.db
       .prepare("INSERT INTO reconciliations (at, block, checked, mismatches, orphan_mints) VALUES (?, ?, ?, ?, ?)")
@@ -417,6 +481,75 @@ const toPlayerStats = (r: Record<string, string | number | null>): PlayerStats =
   lastDay: (r.last_day as string | null) ?? null,
   rank: Number(r.rank),
 });
+
+export interface OwnerLedger {
+  owner: Address;
+  token: Address;
+  credited: bigint;
+  withdrawn: bigint;
+  /** credited - withdrawn: must equal NoxPayments.ownerBalance(owner, token). */
+  owed: bigint;
+}
+
+export interface AgentRevenue {
+  agentId: number;
+  owner: Address;
+  token: Address;
+  /** Credited at payment time from Game Nights that used the agent. */
+  gameNights: bigint;
+  /** Credited by monthly pool allocations from pass revenue. */
+  pool: bigint;
+  total: bigint;
+}
+
+export interface TreasuryLedger {
+  token: Address;
+  passes: bigint;
+  /** Game Night payments minus the agent owners' shares. */
+  gameNights: bigint;
+  pool: bigint;
+  withdrawn: bigint;
+  /** Must equal NoxPayments.treasuryBalance(token). */
+  balance: bigint;
+}
+
+export interface PaymentLedger {
+  owners: OwnerLedger[];
+  agents: AgentRevenue[];
+  treasury: TreasuryLedger[];
+}
+
+export interface PaymentReconciliation {
+  at: number;
+  block: number;
+  checked: number;
+  mismatches: { kind: "owner" | "treasury"; owner?: Address; token: Address; indexed: string; onChain: string }[];
+}
+
+/**
+ * Compare the indexed agent-owner balances and treasury balances with NoxPayments at the indexed
+ * block (F18-D05). Owners are paid by pulling their balance, so a difference means the index or the
+ * settlement records are wrong before anyone is paid from them.
+ */
+export async function reconcilePayments(
+  store: EventStore,
+  read: { ownerBalance: (owner: Address, token: Address, block: bigint) => Promise<bigint>; treasuryBalance: (token: Address, block: bigint) => Promise<bigint> },
+): Promise<PaymentReconciliation> {
+  const block = store.indexedBlock();
+  const ledger = store.paymentLedger();
+  const mismatches: PaymentReconciliation["mismatches"] = [];
+  for (const o of ledger.owners) {
+    const onChain = await read.ownerBalance(o.owner, o.token, BigInt(block));
+    if (onChain !== o.owed) mismatches.push({ kind: "owner", owner: o.owner, token: o.token, indexed: o.owed.toString(), onChain: onChain.toString() });
+  }
+  for (const t of ledger.treasury) {
+    const onChain = await read.treasuryBalance(t.token, BigInt(block));
+    if (onChain !== t.balance) mismatches.push({ kind: "treasury", token: t.token, indexed: t.balance.toString(), onChain: onChain.toString() });
+  }
+  const r: PaymentReconciliation = { at: Date.now(), block, checked: ledger.owners.length + ledger.treasury.length, mismatches };
+  store.recordPaymentReconciliation(r);
+  return r;
+}
 
 export interface Reconciliation {
   at: number;
