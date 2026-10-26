@@ -1,15 +1,20 @@
 # nox-backend
 
-Backend Nox: bot Telegram, worker on-chain, dan database.
+Backend Nox: bot Telegram, ledger on-chain, indexer event, dan API publik.
 
 | Folder | Isi |
 |---|---|
-| `bot/` | Bot Telegram (grammY, webhook) + runtime game engine + AI Game Master |
-| `worker/` | Wallet & signer (KMS), gas drip, antrean tx per alamat, indexer event |
-| `db/` | Skema & migrasi Postgres |
+| `bot/src/` | Bot Telegram (grammY, webhook atau long polling), ruang game, AI Game Master, ledger chain (viem: wallet turunan, gas drip, antrean tx per game), indexer event + API publik `/v1/*`, store SQLite (`node:sqlite`) |
+| `bot/scripts/` | CLI operator: laporan, booking Game Night, pass, agent, settlement, rekonsiliasi, backup, rotasi kunci, simulasi |
+| `bot/test/` | Tes unit + e2e anvil (`vitest`) |
+| `docs/` | Arsitektur, model data, kontrak data, metrik, anti-cheat, syarat agent, kebijakan data LLM, ADR |
+| `agents/` | Contoh persona untuk `agents.ts add` |
+| `worker/`, `db/` | Hanya penunjuk: kode worker ada di `bot/src/chain/`, data ada di SQLite (lihat `docs/data-model.md`) |
 
 Memakai [`nox-shared`](https://github.com/Nox-QIE/nox-shared) untuk aturan game, crypto-spec, dan config. Bagian dari [Nox](https://github.com/Nox-QIE).
 
+
+Peta arsitektur (komponen, alur satu game, model kepercayaan, data, operasi): [docs/architecture.md](docs/architecture.md).
 ## Indexer event on-chain
 
 `npm run indexer` menjaga `data/index.db` tetap sama dengan event kontrak Nox (NoxGame, NoxCredits, dan bila diisi NoxAgentRegistry & NoxPayments). Hanya membaca chain, jadi tidak butuh `NOX_OPERATOR_KEY` atau `NOX_WALLET_SECRET`.
