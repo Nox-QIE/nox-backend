@@ -11,6 +11,7 @@ export const EXPECTED_EVENT: Record<string, string | null> = {
   createGame: "GameCreated",
   joinGame: "PlayerJoined",
   commitRoles: "RolesCommitted",
+  createGameWithMode: "GameCreated",
   commitNightAction: "NightActionCommitted",
   castVote: "VoteCast",
   recordRound: "RoundRecorded",
