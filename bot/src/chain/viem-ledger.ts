@@ -1,4 +1,6 @@
 import {
+  BaseError,
+  ContractFunctionRevertedError,
   createPublicClient,
   createWalletClient,
   defineChain,
@@ -78,6 +80,10 @@ export interface ViemLedgerOptions {
   pollingMs?: number;
   /** Replaces the RPC transport (tests use it to simulate a misbehaving node). */
   transport?: Transport;
+  /** Tries per transaction before the game is cancelled. Default 3. */
+  maxAttempts?: number;
+  /** Wait before retry n is n × this (ms). Default 1500. */
+  retryDelayMs?: number;
   /** Called once a game is finalized or cancelled on-chain (to mark it settled in the store). */
   onSettled?: (gameId: Hex, outcome: "finalized" | "cancelled") => void;
   log?: (line: Record<string, unknown>) => void;
@@ -138,6 +144,47 @@ export function gasLimitFor(functionName: string, estimate: bigint): bigint {
   const floor = GAS_FLOOR[functionName] ?? 100_000n;
   const padded = (estimate * 125n) / 100n;
   return padded > floor ? padded : floor;
+}
+
+/** A mined transaction that reverted: final, retrying would only burn gas again. */
+class TxRevertedError extends Error {}
+/** A gas drip refused by the daily caps: final until tomorrow. */
+class DripRefusedError extends Error {}
+
+const STATUS_FINALIZED = 3;
+const STATUS_CANCELLED = 4;
+
+/**
+ * Whether a retry's revert shows the step already happened: the earlier attempt reached the chain
+ * even though we saw an error (a lost RPC response, a node that answered late).
+ */
+export function alreadyDone(functionName: string, err: unknown): boolean {
+  const revert = err instanceof BaseError ? err.walk((e) => e instanceof ContractFunctionRevertedError) : null;
+  const data = (revert as ContractFunctionRevertedError | null)?.data;
+  if (!data) return false;
+  const args = (data.args ?? []) as readonly (number | bigint)[];
+  switch (data.errorName) {
+    case "AlreadyExists":
+      return functionName === "createGame";
+    case "AlreadyJoined":
+      return functionName === "joinGame";
+    case "AlreadyCommitted":
+      return functionName === "commitNightAction";
+    case "AlreadyVoted":
+      return functionName === "castVote";
+    case "WrongStatus": {
+      const actual = Number(args[1]);
+      return (
+        (functionName === "commitRoles" && actual >= 2) ||
+        (functionName === "revealAndFinalize" && actual === STATUS_FINALIZED) ||
+        (functionName === "cancelGame" && actual === STATUS_CANCELLED)
+      );
+    }
+    case "WrongRound":
+      // recordRound(r) moves the game to round r + 1, so a repeat sees expected = actual + 1.
+      return functionName === "recordRound" && Number(args[0]) === Number(args[1]) + 1;
+  }
+  return false;
 }
 
 /** Player actions that may run in parallel with each other (different wallets, same phase). */
@@ -277,8 +324,42 @@ export class ViemLedger implements GameLedger {
   }
 
   private async confirm(hash: Hex, what: string) {
-    const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
-    if (receipt.status !== "success") throw new Error(`${what} reverted (${hash})`);
+    const receipt = await this.publicClient.waitForTransactionReceipt({ hash, timeout: 60_000 });
+    if (receipt.status !== "success") throw new TxRevertedError(`${what} reverted (${hash})`);
+  }
+
+  /**
+   * Send and confirm one transaction, retrying up to maxAttempts (F05-S06, F11-S05). Before anything
+   * was broadcast every error is retried (a simulated revert costs nothing; a lagging node may revert
+   * wrongly). Once a hash exists, only its receipt is awaited again, never a second copy. A mined
+   * revert is final. On a retry, `done` tells whether the earlier attempt landed after all.
+   */
+  private async withRetry(what: string, send: () => Promise<Hex>, done: (err: unknown) => Promise<boolean> | boolean): Promise<Hex | null> {
+    const max = this.o.maxAttempts ?? 3;
+    let hash: Hex | undefined;
+    let last: unknown;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        // Nothing to wait for from the last try: make sure it did not land before sending again.
+        if (attempt > 1 && !hash && (await done(last))) {
+          this.o.log?.({ event: "chain_retry_done", what, attempt });
+          return null;
+        }
+        hash ??= await send();
+        await this.confirm(hash, what);
+        return hash;
+      } catch (e) {
+        if (e instanceof TxRevertedError || e instanceof DripRefusedError) throw e;
+        if (attempt > 1 && !hash && (await done(e))) {
+          this.o.log?.({ event: "chain_retry_done", what, attempt });
+          return null;
+        }
+        if (attempt >= max) throw e;
+        last = e;
+        this.o.log?.({ event: "chain_retry", what, attempt, error: e instanceof Error ? e.message.split("\n")[0] : String(e) });
+        await new Promise((r) => setTimeout(r, (this.o.retryDelayMs ?? 1500) * attempt));
+      }
+    }
   }
 
   /**
@@ -300,9 +381,11 @@ export class ViemLedger implements GameLedger {
   }
 
   private async asOperator(functionName: string, args: readonly unknown[]) {
-    const hash = await this.operatorSend((nonce) => this.submit(this.operator, functionName, args, nonce));
-    await this.confirm(hash, functionName);
-    return hash;
+    return this.withRetry(
+      functionName,
+      () => this.operatorSend((nonce) => this.submit(this.operator, functionName, args, nonce)),
+      (e) => alreadyDone(functionName, e),
+    );
   }
 
   private async asPlayer(userId: number, functionName: string, args: readonly unknown[]) {
@@ -311,9 +394,11 @@ export class ViemLedger implements GameLedger {
     if (!q) this.playerQueues.set(account.address, (q = new SerialQueue()));
     return q.run(async () => {
       await this.drip(account.address);
-      const hash = await this.submit(account, functionName, args);
-      await this.confirm(hash, functionName);
-      return hash;
+      return this.withRetry(
+        functionName,
+        () => this.submit(account, functionName, args),
+        (e) => alreadyDone(functionName, e),
+      );
     });
   }
 
@@ -328,10 +413,10 @@ export class ViemLedger implements GameLedger {
     const mine = (this.drippedToday.get(to) ?? 0n) + wei;
     const total = this.drippedTotalToday + wei;
     if (this.o.dripDailyCapPerPlayer !== undefined && mine > this.o.dripDailyCapPerPlayer) {
-      throw new Error(`gas drip refused: ${to} reached its daily cap`);
+      throw new DripRefusedError(`gas drip refused: ${to} reached its daily cap`);
     }
     if (this.o.dripDailyBudget !== undefined && total > this.o.dripDailyBudget) {
-      throw new Error("gas drip refused: daily gas budget used up");
+      throw new DripRefusedError("gas drip refused: daily gas budget used up");
     }
     this.drippedToday.set(to, mine);
     this.drippedTotalToday = total;
@@ -343,8 +428,12 @@ export class ViemLedger implements GameLedger {
     this.reserveDrip(to, this.o.dripAmount - balance);
     const wallet = createWalletClient({ account: this.operator, chain: this.o.chain, transport: this.transport });
     const value = this.o.dripAmount - balance;
-    const hash = await this.operatorSend((nonce) => wallet.sendTransaction({ to, value, nonce, chain: this.o.chain }));
-    await this.confirm(hash, "gas drip");
+    // A drip that was sent but whose response got lost shows up as a topped-up balance: never send twice.
+    const hash = await this.withRetry(
+      "gas drip",
+      () => this.operatorSend((nonce) => wallet.sendTransaction({ to, value, nonce, chain: this.o.chain })),
+      async () => (await this.publicClient.getBalance({ address: to })) >= this.o.minBalance,
+    );
     this.o.log?.({ event: "gas_drip", to, wei: value.toString(), hash });
   }
 }
