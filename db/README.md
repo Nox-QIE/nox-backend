@@ -1,3 +1,3 @@
 # backend/db
 
-The design planned Postgres for data stores D1–D16. The MVP keeps them in SQLite (`node:sqlite`): the bot store `data/nox.db` and the event index `data/index.db`, with columns added on open (no separate migration files). The full map of stores, fields, protection and retention is in [docs/data-model.md](../docs/data-model.md).
+Desain awal memakai Postgres untuk data store D1–D16. MVP menyimpannya di SQLite (`node:sqlite`): store bot `data/nox.db` dan indeks event `data/index.db`, kolom baru ditambahkan saat dibuka (tanpa file migrasi terpisah). Peta lengkap store, field, proteksi, dan retensi: [docs/data-model.md](../docs/data-model.md).
