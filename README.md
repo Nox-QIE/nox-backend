@@ -44,6 +44,7 @@ Memakai [`nox-shared`](https://github.com/Nox-QIE/nox-shared) untuk aturan game,
 | `GET /v1/players/<address>` | Credits, game, menang, tx ditandatangani, riwayat peran |
 | `GET /v1/daily?days=30` | Penanda tangan unik per hari UTC (maks 90) |
 | `GET /v1/engagement?weeks=8` | Engagement semua grup dengan definisi yang sama persis dengan laporan Game Night klien (game selesai, kursi, pemain unik, aktif & retensi per minggu ISO; maks 26 minggu) |
+| `GET /v1/agents`, `GET /v1/agents/<id>` | Agent Marketplace dari NoxAgentRegistry (D16): pemilik, mode, status, hash persona, share (bps), pendapatan per token |
 | `GET /v1/agents/revenue` | Pendapatan agent Marketplace dari event NoxPayments: per agent (Game Night vs pool bulanan) dan per pemilik (dikreditkan, ditarik, terutang); jumlah dalam wei (string) |
 
 Definisi setiap angka (sumber event, aturan waktu UTC, privasi): [docs/metrics.md](docs/metrics.md).

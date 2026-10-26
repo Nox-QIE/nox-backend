@@ -318,6 +318,62 @@ export class EventStore {
    * Agent revenue and treasury ledger from NoxPayments events (F18-D05). Amounts are summed as bigints:
    * 18-decimal token amounts overflow SQLite's 64-bit integers.
    */
+  /**
+   * D16 as public on chain (F18-D01): every NoxAgentRegistry agent replayed from its events, joined with
+   * its revenue from NoxPayments. Persona text and endpoint secrets stay in the bot store; the chain has
+   * the persona's hash. A share set equal to the default at that moment is read as "follows the
+   * default", since clearAgentShare emits the same event; a later default change then applies to it.
+   */
+  agents(): AgentOnChain[] {
+    const MODES = ["none", "hosted", "endpoint"] as const;
+    const STATUSES = ["none", "active", "suspended", "revoked"] as const;
+    let defaultBps = 3000; // NoxAgentRegistry's initial default
+    const byId = new Map<number, AgentOnChain>();
+    const rows = this.rows("SELECT event, ts, args FROM chain_events WHERE contract = 'NoxAgentRegistry' ORDER BY block, log_index");
+    for (const r of rows) {
+      const a = JSON.parse(r.args as string) as Record<string, string | number>;
+      const id = Number(a.agentId ?? 0);
+      const agent = byId.get(id);
+      switch (r.event) {
+        case "AgentRegistered":
+          byId.set(id, {
+            agentId: id,
+            owner: String(a.owner).toLowerCase() as Address,
+            mode: MODES[Number(a.mode)] ?? "none",
+            status: "active",
+            metadataHash: a.metadataHash as Hex,
+            shareBps: defaultBps,
+            customShare: false,
+            registeredAt: Number(r.ts),
+            revenue: [],
+          });
+          break;
+        case "AgentStatusChanged":
+          if (agent) agent.status = STATUSES[Number(a.status)] ?? agent.status;
+          break;
+        case "AgentMetadataUpdated":
+          if (agent) agent.metadataHash = a.metadataHash as Hex;
+          break;
+        case "AgentOwnerChanged":
+          if (agent) agent.owner = String(a.owner).toLowerCase() as Address;
+          break;
+        case "ShareChanged":
+          if (id === 0) {
+            defaultBps = Number(a.shareBps);
+            for (const x of byId.values()) if (!x.customShare) x.shareBps = defaultBps;
+          } else if (agent) {
+            agent.shareBps = Number(a.shareBps);
+            agent.customShare = agent.shareBps !== defaultBps;
+          }
+          break;
+      }
+    }
+    for (const rev of this.paymentLedger().agents) {
+      byId.get(rev.agentId)?.revenue.push({ token: rev.token, gameNights: rev.gameNights, pool: rev.pool, total: rev.total });
+    }
+    return [...byId.values()].sort((x, y) => x.agentId - y.agentId);
+  }
+
   paymentLedger(): PaymentLedger {
     const rows = this.rows(
       `SELECT event, tx_hash, args FROM chain_events WHERE contract = 'NoxPayments'
@@ -660,6 +716,22 @@ export interface TreasuryLedger {
   withdrawn: bigint;
   /** Must equal NoxPayments.treasuryBalance(token). */
   balance: bigint;
+}
+
+/** One Marketplace agent as the chain knows it (D16, F18-D01). */
+export interface AgentOnChain {
+  agentId: number;
+  owner: Address;
+  mode: "none" | "hosted" | "endpoint";
+  status: "none" | "active" | "suspended" | "revoked";
+  /** keccak256 of the persona's canonical JSON (hosted) or of the endpoint's metadata. */
+  metadataHash: Hex;
+  /** The owner's share of revenue, in basis points, and whether it was set for this agent. */
+  shareBps: number;
+  customShare: boolean;
+  registeredAt: number;
+  /** Credited revenue per token, in its smallest unit: Game Night shares and monthly pool. */
+  revenue: { token: Address; gameNights: bigint; pool: bigint; total: bigint }[];
 }
 
 export interface PaymentLedger {

@@ -64,6 +64,14 @@ The all-time numbers come from the `player_stats` mirror. It is rebuilt after ev
 
 `/v1/players/<address>` also lists the wallet's pass purchases (`passes`, D9). Each one is on chain, with amount in wei and the payer, or rupiah, with only the receipt hash. Each carries its expiry and whether it is still active.
 
+## `GET /v1/agents` and `GET /v1/agents/<id>`
+
+These mirror D16 as public on chain, from NoxAgentRegistry events.
+- Fields per agent: `agentId` (the registry id), `owner`, `mode` (`hosted` / `endpoint`), `status` (`active` / `suspended` / `revoked`), `metadataHash` (the hash of the persona or endpoint metadata), `shareBps` (the owner's share), `customShare`, and `registeredAt`.
+- `revenue` lists, per token, Game Night credits and the monthly pool, in the smallest unit as strings.
+- A share set equal to the default at that moment counts as following the default. That is what `clearAgentShare` emits, so the agent then follows later default changes.
+- Persona text and endpoint secrets are not on chain and are not served.
+
 ## `GET /v1/agents/revenue`
 
 These are Agent Marketplace amounts from NoxPayments events, in the token's smallest unit, as strings. Per agent: Game Night credits and monthly pool allocations (`AgentCredited`, `AgentPoolAllocated`). Per owner: credited, withdrawn and still owed. `/v1/health` → `paymentsReconciliation` checks them against the contract's balances.

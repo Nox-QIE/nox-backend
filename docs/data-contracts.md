@@ -120,7 +120,7 @@ See [agent-terms.md](agent-terms.md), section 3, for the full table. In short:
 
 ## Public read API (out to E1, E3 and anyone)
 
-`GET /v1/health`, `/v1/stats`, `/v1/leaderboard`, `/v1/daily`, `/v1/engagement`, `/v1/games`, `/v1/games/<id>`, `/v1/players/<address>`, `/v1/agents/revenue`. These are GET/HEAD only, with CORS `*` and an ETag equal to the indexed block. They return JSON: public chain data and aggregates only. Every field is defined in [metrics.md](metrics.md).
+`GET /v1/health`, `/v1/agents` (D16 from NoxAgentRegistry, list or `/v1/agents/<id>`), `/v1/stats`, `/v1/leaderboard`, `/v1/daily`, `/v1/engagement`, `/v1/games`, `/v1/games/<id>`, `/v1/players/<address>`, `/v1/agents/revenue`. These are GET/HEAD only, with CORS `*` and an ETag equal to the indexed block. They return JSON: public chain data and aggregates only. Every field is defined in [metrics.md](metrics.md).
 
 With `NOX_LOGIN_SECRET` set, two more routes exist for web sign-in (NOX-APP-14). Neither is cached (`no-store`).
 - `POST /v1/login`: body `{"token": "<login token from /web>"}`. Answers `{address, session, expiresAt}` (a 7-day session token), or `401` if the token is expired, forged or already used. Used nonces are kept in the index DB (`used_logins`) until they expire.
