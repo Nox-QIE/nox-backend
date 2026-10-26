@@ -9,7 +9,7 @@ import { createPublicClient, type Abi } from "viem";
 import { createApi } from "../src/api.js";
 import { loadIndexerConfig } from "../src/config.js";
 import { NoxAgentRegistryAbi, NoxCreditsAbi, NoxGameAbi, NoxPaymentsAbi } from "../src/chain/contracts.js";
-import { EventIndexer, EventStore, type IndexedContract, type IndexerClient } from "../src/chain/indexer.js";
+import { EventIndexer, EventStore, reconcileCredits, type IndexedContract, type IndexerClient } from "../src/chain/indexer.js";
 import { chainFor, rpcTransport } from "../src/chain/viem-ledger.js";
 
 const c = loadIndexerConfig();
@@ -29,9 +29,19 @@ const store = new EventStore(c.dbPath);
 const indexer = new EventIndexer({ client: client as unknown as IndexerClient, store, contracts, fromBlock: c.fromBlock, confirmations: c.confirmations, log });
 log({ event: "index_start", network: c.network, contracts: contracts.map((x) => x.name), fromBlock: c.fromBlock.toString(), db: c.dbPath });
 
+const balanceAt = (account: `0x${string}`, blockNumber: bigint) =>
+  client.readContract({ address: credits, abi: NoxCreditsAbi, functionName: "balanceOf", args: [account], blockNumber });
+const reconcile = async () => {
+  const r = await reconcileCredits(store, balanceAt);
+  const bad = r.mismatches.length > 0 || r.orphanMints > 0;
+  log({ event: bad ? "credits_mismatch" : "credits_reconciled", block: r.block, checked: r.checked, mismatches: r.mismatches, orphanMints: r.orphanMints });
+};
+
 if (process.argv.includes("--once")) {
   const r = await indexer.syncOnce();
+  store.refreshPlayerStats();
   log({ event: "index_synced", events: r.events, block: r.block.toString(), stats: store.stats() });
+  if (c.reconcileMinutes !== null) await reconcile();
   store.close();
 } else {
   const api = c.api ? createApi({ store, network: c.network, chainId: chain.id, trustProxy: c.api.trustProxy, ratePerMinute: c.api.ratePerMinute, log }) : null;
@@ -47,10 +57,21 @@ if (process.argv.includes("--once")) {
   };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
+  let lastRefresh = 0;
+  let lastReconcile = 0;
   while (!stopping) {
     try {
       const r = await indexer.syncOnce();
       if (r.events) log({ event: "index_synced", events: r.events, block: r.block.toString() });
+      // Streaks break with time alone, so the D7 mirror is also rebuilt every hour.
+      if (Date.now() - lastRefresh >= 3600_000) {
+        store.refreshPlayerStats();
+        lastRefresh = Date.now();
+      }
+      if (c.reconcileMinutes !== null && Date.now() - lastReconcile >= c.reconcileMinutes * 60_000) {
+        lastReconcile = Date.now();
+        await reconcile();
+      }
     } catch (err) {
       // RPC hiccups are expected on QIE; the checkpoint makes the next round resume where this one stopped.
       log({ event: "index_error", error: err instanceof Error ? err.message.split("\n")[0] : String(err) });

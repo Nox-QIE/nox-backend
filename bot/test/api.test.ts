@@ -48,14 +48,21 @@ describe("public API", () => {
   it("serves stats, health and the leaderboard", async () => {
     const { get } = await setup();
     const health = await (await get("/v1/health")).json();
-    expect(health).toEqual({ ok: true, network: "testnet", chainId: 1983, indexedBlock: 500 });
+    expect(health).toEqual({ ok: true, network: "testnet", chainId: 1983, indexedBlock: 500, reconciliation: null });
     const stats = await (await get("/v1/stats")).json();
     expect(stats).toMatchObject({ players: 3, finishedGames: 1, cancelledGames: 1, credits: 70, indexedBlock: 500 });
     const board = await (await get("/v1/leaderboard?limit=2")).json();
+    expect(board.season).toBeNull();
     expect(board.players).toEqual([
-      { account: ben, credits: 30, games: 1, wins: 1 },
-      { account: cy, credits: 30, games: 1, wins: 1 },
+      expect.objectContaining({ account: ben, credits: 30, games: 1, wins: 1, rank: 1 }),
+      expect.objectContaining({ account: cy, credits: 30, games: 1, wins: 1, rank: 2 }),
     ]);
+    expect((await get("/v1/leaderboard?season=2026-9")).status).toBe(400);
+    const sept = await (await get("/v1/leaderboard?season=2026-09")).json();
+    expect(sept.players.map((p: { account: string }) => p.account)).toEqual([ben, cy, ava]);
+    expect((await (await get("/v1/leaderboard?season=2026-10")).json()).players).toEqual([]);
+    const p = await (await get(`/v1/players/${ben}`)).json();
+    expect(p.stats).toMatchObject({ credits: 30, games: 1, wins: 1, bestStreak: 1, rank: 1 });
   });
 
   it("lists games newest first with their status, and pages with ?before", async () => {

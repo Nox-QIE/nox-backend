@@ -12,7 +12,7 @@ import {
   NoxPaymentsAbi,
   NoxPaymentsBytecode,
 } from "../src/chain/contracts.js";
-import { EventIndexer, EventStore, type IndexerClient } from "../src/chain/indexer.js";
+import { EventIndexer, EventStore, reconcileCredits, type IndexerClient } from "../src/chain/indexer.js";
 import { operatorFrom, registerAgentOnChain } from "../src/chain/operator.js";
 import { settleMonth } from "../src/chain/settle.js";
 import { gasLimitFor, rpcTransport, ViemLedger, type PlayerReward, type TxRecord } from "../src/chain/viem-ledger.js";
@@ -523,12 +523,12 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
       chunk: 7n, // small chunks so the run crosses many chunk borders
     });
     await indexer.syncOnce();
-    const board = store.leaderboard(1000);
-    expect(board.length).toBeGreaterThanOrEqual(5);
-    for (const row of board) {
-      const onChain = await publicClient.readContract({ address: creditsAddress, abi: NoxCreditsAbi, functionName: "balanceOf", args: [row.account] });
-      expect(BigInt(row.credits)).toBe(onChain);
-    }
+    const r = await reconcileCredits(store, (account, blockNumber) =>
+      publicClient.readContract({ address: creditsAddress, abi: NoxCreditsAbi, functionName: "balanceOf", args: [account], blockNumber }),
+    );
+    expect(r.checked).toBeGreaterThanOrEqual(5);
+    expect(r.mismatches).toEqual([]);
+    expect(r.orphanMints).toBe(0);
     expect(store.stats().finishedGames).toBeGreaterThanOrEqual(1);
     expect((await indexer.syncOnce()).events).toBe(0);
   }, 60_000);

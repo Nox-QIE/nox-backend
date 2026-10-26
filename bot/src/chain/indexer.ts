@@ -75,6 +75,24 @@ export class EventStore {
       CREATE INDEX IF NOT EXISTS chain_events_event ON chain_events (event, account);
       CREATE INDEX IF NOT EXISTS chain_events_block ON chain_events (block);
       CREATE TABLE IF NOT EXISTS chain_checkpoints (key TEXT PRIMARY KEY, block INTEGER NOT NULL, block_hash TEXT);
+      CREATE TABLE IF NOT EXISTS player_stats (
+        account TEXT PRIMARY KEY,
+        credits INTEGER NOT NULL,
+        games INTEGER NOT NULL,
+        wins INTEGER NOT NULL,
+        streak_days INTEGER NOT NULL,
+        best_streak INTEGER NOT NULL,
+        last_day TEXT,
+        rank INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS reconciliations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        at INTEGER NOT NULL,
+        block INTEGER NOT NULL,
+        checked INTEGER NOT NULL,
+        mismatches TEXT NOT NULL,
+        orphan_mints INTEGER NOT NULL
+      );
     `);
   }
 
@@ -154,25 +172,126 @@ export class EventStore {
   }
 
   /**
-   * Players ranked by credits. A win is a finalized game where the player's revealed role is on the
-   * winning team (werewolf = 2 → wolves = 2, every other role → village = 1).
+   * Each player's finalized games, from public events: the day (UTC), whether they won (their revealed
+   * role's team is the recorded winner: werewolf = 2 → wolves = 2, every other role → village = 1)
+   * and the credits minted to them in that game.
    */
-  leaderboard(limit = 50): { account: Address; credits: number; games: number; wins: number }[] {
+  private playerGames(fromTs = 0, toTs = Number.MAX_SAFE_INTEGER) {
     return this.rows(
-      `WITH credits AS (
-         SELECT account, SUM(CAST(json_extract(args, '$.amount') AS INTEGER)) AS credits
-         FROM chain_events WHERE event = 'CreditsMinted' GROUP BY account),
-       finished AS (
-         SELECT game_id, CAST(json_extract(args, '$.winner') AS INTEGER) AS winner FROM chain_events WHERE event = 'GameFinalized'),
-       results AS (
-         SELECT r.account,
-                CASE WHEN (CASE WHEN CAST(json_extract(r.args, '$.role') AS INTEGER) = 2 THEN 2 ELSE 1 END) = f.winner THEN 1 ELSE 0 END AS won
-         FROM chain_events r JOIN finished f ON f.game_id = r.game_id WHERE r.event = 'RoleRevealed')
-       SELECT c.account, c.credits, COUNT(res.account) AS games, COALESCE(SUM(res.won), 0) AS wins
-       FROM credits c LEFT JOIN results res ON res.account = c.account
-       GROUP BY c.account ORDER BY c.credits DESC, wins DESC, c.account LIMIT ?`,
-      limit,
-    ).map((r) => ({ account: r.account as Address, credits: Number(r.credits), games: Number(r.games), wins: Number(r.wins) }));
+      `SELECT r.account, r.game_id, f.ts,
+              CASE WHEN (CASE WHEN CAST(json_extract(r.args, '$.role') AS INTEGER) = 2 THEN 2 ELSE 1 END)
+                        = CAST(json_extract(f.args, '$.winner') AS INTEGER) THEN 1 ELSE 0 END AS won,
+              COALESCE((SELECT SUM(CAST(json_extract(m.args, '$.amount') AS INTEGER)) FROM chain_events m
+                        WHERE m.event = 'CreditsMinted' AND m.game_id = r.game_id AND m.account = r.account), 0) AS credits
+       FROM chain_events r JOIN chain_events f ON f.game_id = r.game_id AND f.event = 'GameFinalized'
+       WHERE r.event = 'RoleRevealed' AND f.ts >= ? AND f.ts < ?
+       ORDER BY f.ts`,
+      fromTs,
+      toTs,
+    ).map((r) => ({ account: r.account as Address, gameId: r.game_id as Hex, ts: Number(r.ts), won: Number(r.won) === 1, credits: Number(r.credits) }));
+  }
+
+  /**
+   * Rebuild the D7 mirror (player_stats) from the events: credits (all CreditsMinted), finalized games,
+   * wins, daily streak and rank. Streaks follow NoxGame (consecutive UTC days with a finalized game);
+   * the current streak is 0 once a whole day has passed without one.
+   */
+  refreshPlayerStats(nowTs = Math.floor(Date.now() / 1000)) {
+    const dayOf = (ts: number) => Math.floor(ts / 86_400);
+    const today = dayOf(nowTs);
+    const stats = new Map<string, { games: number; wins: number; days: Set<number> }>();
+    for (const g of this.playerGames()) {
+      const p = stats.get(g.account) ?? { games: 0, wins: 0, days: new Set<number>() };
+      p.games++;
+      if (g.won) p.wins++;
+      p.days.add(dayOf(g.ts));
+      stats.set(g.account, p);
+    }
+    const credits = new Map(
+      this.rows("SELECT account, SUM(CAST(json_extract(args, '$.amount') AS INTEGER)) AS n FROM chain_events WHERE event = 'CreditsMinted' GROUP BY account").map((r) => [
+        r.account as string,
+        Number(r.n),
+      ]),
+    );
+    const rows = [...new Set([...stats.keys(), ...credits.keys()])].map((account) => {
+      const p = stats.get(account) ?? { games: 0, wins: 0, days: new Set<number>() };
+      const days = [...p.days].sort((a, b) => a - b);
+      let best = 0;
+      let run = 0;
+      for (let i = 0; i < days.length; i++) {
+        run = i > 0 && days[i] === days[i - 1]! + 1 ? run + 1 : 1;
+        best = Math.max(best, run);
+      }
+      const last = days.at(-1);
+      const current = last !== undefined && last >= today - 1 ? run : 0;
+      return { account, credits: credits.get(account) ?? 0, games: p.games, wins: p.wins, current, best, lastDay: last === undefined ? null : new Date(last * 86_400_000).toISOString().slice(0, 10) };
+    });
+    rows.sort((a, b) => b.credits - a.credits || b.wins - a.wins || a.account.localeCompare(b.account));
+    const insert = this.db.prepare(
+      "INSERT INTO player_stats (account, credits, games, wins, streak_days, best_streak, last_day, rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    );
+    this.db.exec("BEGIN");
+    try {
+      this.db.exec("DELETE FROM player_stats");
+      rows.forEach((r, i) => insert.run(r.account, r.credits, r.games, r.wins, r.current, r.best, r.lastDay, i + 1));
+      this.db.exec("COMMIT");
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+    return rows.length;
+  }
+
+  /** One player's D7 row, or null before their first credits. */
+  playerStats(account: Address): PlayerStats | null {
+    const r = this.rows("SELECT * FROM player_stats WHERE account = ?", account.toLowerCase())[0];
+    return r ? toPlayerStats(r) : null;
+  }
+
+  /**
+   * Players ranked by credits (ties: more wins first). Without a season it reads the D7 mirror; with a
+   * season ("2026-10", a UTC month) it counts only games finalized in that month (F12-S05).
+   */
+  leaderboard(limit = 50, season?: string): PlayerStats[] {
+    if (!season) return this.rows("SELECT * FROM player_stats ORDER BY rank LIMIT ?", limit).map(toPlayerStats);
+    const m = /^(\d{4})-(\d{2})$/.exec(season);
+    if (!m || Number(m[2]) < 1 || Number(m[2]) > 12) throw new Error("season must look like 2026-10");
+    const from = Date.UTC(Number(m[1]), Number(m[2]) - 1, 1) / 1000;
+    const to = Date.UTC(Number(m[1]), Number(m[2]), 1) / 1000;
+    const by = new Map<string, PlayerStats>();
+    for (const g of this.playerGames(from, to)) {
+      const p = by.get(g.account) ?? { account: g.account, credits: 0, games: 0, wins: 0, streakDays: 0, bestStreak: 0, lastDay: null, rank: 0 };
+      p.credits += g.credits;
+      p.games++;
+      if (g.won) p.wins++;
+      by.set(g.account, p);
+    }
+    return [...by.values()]
+      .sort((a, b) => b.credits - a.credits || b.wins - a.wins || a.account.localeCompare(b.account))
+      .slice(0, limit)
+      .map((p, i) => ({ ...p, rank: i + 1 }));
+  }
+
+  /** Credits minted for a game that never finalized (only NoxGame's finalize should ever mint). */
+  orphanMints(): { account: Address; gameId: Hex | null; amount: number; txHash: Hex }[] {
+    return this.rows(
+      `SELECT m.account, m.game_id, CAST(json_extract(m.args, '$.amount') AS INTEGER) AS amount, m.tx_hash FROM chain_events m
+       WHERE m.event = 'CreditsMinted'
+         AND NOT EXISTS (SELECT 1 FROM chain_events f WHERE f.event = 'GameFinalized' AND f.game_id = m.game_id)`,
+    ).map((r) => ({ account: r.account as Address, gameId: r.game_id as Hex | null, amount: Number(r.amount), txHash: r.tx_hash as Hex }));
+  }
+
+  recordReconciliation(r: Reconciliation) {
+    this.db
+      .prepare("INSERT INTO reconciliations (at, block, checked, mismatches, orphan_mints) VALUES (?, ?, ?, ?, ?)")
+      .run(r.at, r.block, r.checked, json(r.mismatches), r.orphanMints);
+  }
+
+  lastReconciliation(): Reconciliation | null {
+    const r = this.rows("SELECT * FROM reconciliations ORDER BY id DESC LIMIT 1")[0];
+    return r
+      ? { at: Number(r.at), block: Number(r.block), checked: Number(r.checked), mismatches: JSON.parse(r.mismatches as string) as Reconciliation["mismatches"], orphanMints: Number(r.orphan_mints) }
+      : null;
   }
 
   /** Credits per account as the index sees them (for reconciliation against NoxCredits.balanceOf). */
@@ -252,6 +371,7 @@ export class EventStore {
     )[0];
     return {
       account: a as Address,
+      stats: this.playerStats(account),
       credits: Number(this.creditsOf(account)),
       games: games.length,
       finished: games.filter((g) => g.status === "finalized").length,
@@ -273,6 +393,61 @@ export class EventStore {
 }
 
 const ROLE_NAMES: Record<number, string> = { 1: "villager", 2: "werewolf", 3: "seer", 4: "doctor" };
+
+/** D7: a player's mirror of on-chain credits and their stats. */
+export interface PlayerStats {
+  account: Address;
+  credits: number;
+  games: number;
+  wins: number;
+  /** Consecutive UTC days with a finalized game, up to today or yesterday; 0 once broken. */
+  streakDays: number;
+  bestStreak: number;
+  lastDay: string | null;
+  rank: number;
+}
+
+const toPlayerStats = (r: Record<string, string | number | null>): PlayerStats => ({
+  account: r.account as Address,
+  credits: Number(r.credits),
+  games: Number(r.games),
+  wins: Number(r.wins),
+  streakDays: Number(r.streak_days),
+  bestStreak: Number(r.best_streak),
+  lastDay: (r.last_day as string | null) ?? null,
+  rank: Number(r.rank),
+});
+
+export interface Reconciliation {
+  at: number;
+  /** Block the balances were read at (the indexed block, so recent mints cannot cause false alarms). */
+  block: number;
+  checked: number;
+  mismatches: { account: Address; indexed: string; onChain: string }[];
+  orphanMints: number;
+}
+
+/**
+ * Compare every indexed credits balance with NoxCredits.balanceOf at the indexed block (F08-D03).
+ * Credits cannot move, so any difference means the index missed or misread an event; a mint for a
+ * game that never finalized means something other than NoxGame's finalize minted.
+ */
+export async function reconcileCredits(store: EventStore, balanceAt: (account: Address, block: bigint) => Promise<bigint>, concurrency = 8): Promise<Reconciliation> {
+  const block = store.indexedBlock();
+  const players = store.leaderboard(1_000_000);
+  const mismatches: Reconciliation["mismatches"] = [];
+  for (let i = 0; i < players.length; i += concurrency) {
+    await Promise.all(
+      players.slice(i, i + concurrency).map(async (p) => {
+        const onChain = await balanceAt(p.account, BigInt(block));
+        if (onChain !== BigInt(p.credits)) mismatches.push({ account: p.account, indexed: String(p.credits), onChain: onChain.toString() });
+      }),
+    );
+  }
+  const r: Reconciliation = { at: Date.now(), block, checked: players.length, mismatches, orphanMints: store.orphanMints().length };
+  store.recordReconciliation(r);
+  return r;
+}
 
 const rewardOf = (a: Record<string, unknown>) => {
   const n = (k: string) => Number(a[k] ?? 0);
@@ -382,6 +557,7 @@ export class EventIndexer {
       cp = { block: to, hash };
       from = to + 1n;
     }
+    if (stored) store.refreshPlayerStats();
     return { events: stored, block: cp.block };
   }
 

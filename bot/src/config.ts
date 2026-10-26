@@ -209,6 +209,8 @@ export interface IndexerConfig {
   confirmations: bigint;
   dbPath: string;
   pollMs: number;
+  /** Minutes between credits reconciliations (balanceOf vs index); null = off. */
+  reconcileMinutes: number | null;
   /** Public read-only API; null = off. Binds to localhost by default (put a reverse proxy in front). */
   api: { port: number; host: string; trustProxy: boolean; ratePerMinute: number } | null;
 }
@@ -234,7 +236,11 @@ export function loadIndexerConfig(env: NodeJS.ProcessEnv = process.env): Indexer
     dbPath: env.NOX_INDEX_DB_PATH || "data/index.db",
     pollMs: seconds(env, "NOX_INDEX_POLL_SECONDS", 10_000),
     api: null,
+    reconcileMinutes: env.NOX_RECONCILE_MINUTES === "off" ? null : Number(env.NOX_RECONCILE_MINUTES || 60),
   };
+  if (c.reconcileMinutes !== null && (!Number.isFinite(c.reconcileMinutes) || c.reconcileMinutes <= 0)) {
+    throw new Error('NOX_RECONCILE_MINUTES must be a positive number of minutes or "off"');
+  }
   if (env.NOX_API_PORT !== "off") {
     const port = Number(env.NOX_API_PORT || 8787);
     const rate = Number(env.NOX_API_RATE_PER_MINUTE || 120);

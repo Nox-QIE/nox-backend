@@ -56,13 +56,16 @@ export function createApi(o: ApiOptions): Server {
     if (rest.length) throw new HttpError(404, "not found");
     switch (resource) {
       case "health":
-        return { ok: true, network: o.network, chainId: o.chainId, indexedBlock: store.indexedBlock() };
+        return { ok: true, network: o.network, chainId: o.chainId, indexedBlock: store.indexedBlock(), reconciliation: store.lastReconciliation() };
       case "stats":
         if (id) break;
         return { ...store.stats(), indexedBlock: store.indexedBlock() };
-      case "leaderboard":
+      case "leaderboard": {
         if (id) break;
-        return { players: store.leaderboard(intParam(url, "limit", 50, 1, 200)) };
+        const season = url.searchParams.get("season") ?? undefined;
+        if (season !== undefined && !/^\d{4}-(0[1-9]|1[0-2])$/.test(season)) throw new HttpError(400, "season must look like 2026-10");
+        return { season: season ?? null, players: store.leaderboard(intParam(url, "limit", 50, 1, 200), season) };
+      }
       case "daily": {
         if (id) break;
         const days = intParam(url, "days", 30, 1, 90);
