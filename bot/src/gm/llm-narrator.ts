@@ -26,7 +26,14 @@ export interface GmStats {
   usage: GmUsage;
   /** Usage per "provider:model" that actually served a call (differs from the primary on failover). */
   byModel: Record<string, GmUsage>;
+  /** Which voice wrote each beat: the persona (agent or theme), Nox's own, or the template alone. */
+  voice: { persona: number; nox: number; template: number };
+  /** The persona was set aside for the rest of this game after too many guard rejections. */
+  personaDemoted: boolean;
 }
+
+/** Guard rejections of a persona's lines in one game before Nox's own voice takes over for good. */
+export const PERSONA_REJECTION_LIMIT = 3;
 
 const emptyUsage = (): GmUsage => ({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
 const addUsage = (to: GmUsage, u: GmUsage) => {
@@ -38,14 +45,18 @@ const addUsage = (to: GmUsage, u: GmUsage) => {
 
 /**
  * AI Game Master. Each beat = one short LLM "flavor" line followed by the template's factual line,
- * so facts never depend on the model. Any failure (timeout, refusal, guard rejection) is retried
- * once, then the template alone is used: a game can never stall on narration.
+ * so facts never depend on the model. Fallback in layers (F18-S06): the persona (a Marketplace agent
+ * or theme) gets two tries, then Nox's own voice one, then the template alone is used: a game can
+ * never stall on narration. A persona whose lines the guard keeps rejecting is set aside for the
+ * rest of the game.
  *
  * Inputs from the room are HTML-escaped; the model sees raw names and its output is escaped again.
  */
 export class LlmNarrator implements Narrator {
   private readonly template: TemplateNarrator;
   private readonly system: string;
+  private readonly noxSystem: string | null;
+  private personaRejections = 0;
   private names: string[] = [];
   readonly stats: GmStats = {
     calls: 0,
@@ -54,29 +65,51 @@ export class LlmNarrator implements Narrator {
     rejected: {},
     usage: emptyUsage(),
     byModel: {},
+    voice: { persona: 0, nox: 0, template: 0 },
+    personaDemoted: false,
   };
 
   constructor(private readonly opts: LlmNarratorOptions) {
     this.template = new TemplateNarrator(opts.lang, opts.wording);
     this.system = systemPrompt(opts.lang, opts.persona);
+    this.noxSystem = opts.persona ? systemPrompt(opts.lang) : null;
   }
 
   private async flavor(beat: Beat, allowed: string[]): Promise<string | null> {
     const forbidden = this.names.filter((n) => !allowed.includes(n));
-    for (let attempt = 0; attempt < 2; attempt++) {
-      this.stats.calls++;
-      try {
-        const r = await this.opts.model.complete(this.system, userPrompt(beat), this.opts.timeoutMs);
-        addUsage(this.stats.usage, r.usage);
-        addUsage((this.stats.byModel[r.model] ??= emptyUsage()), r.usage);
-        const g = checkNarration(r.text, forbidden);
-        if (g.ok) return esc(g.text);
-        this.stats.rejected[g.reason] = (this.stats.rejected[g.reason] ?? 0) + 1;
-      } catch (e) {
-        this.stats.failures++;
-        this.opts.log?.({ event: "gm_error", beat: beat.kind, error: e instanceof Error ? e.message : String(e) });
+    // Persona first (two tries), then Nox's own voice (one try; two when there is no persona to try).
+    const layers: { system: string; tries: number; voice: "persona" | "nox" }[] =
+      this.noxSystem !== null && !this.stats.personaDemoted
+        ? [
+            { system: this.system, tries: 2, voice: "persona" },
+            { system: this.noxSystem, tries: 1, voice: "nox" },
+          ]
+        : [{ system: this.noxSystem ?? this.system, tries: 2, voice: "nox" }];
+    for (const layer of layers) {
+      for (let attempt = 0; attempt < layer.tries; attempt++) {
+        this.stats.calls++;
+        try {
+          const r = await this.opts.model.complete(layer.system, userPrompt(beat), this.opts.timeoutMs);
+          addUsage(this.stats.usage, r.usage);
+          addUsage((this.stats.byModel[r.model] ??= emptyUsage()), r.usage);
+          const g = checkNarration(r.text, forbidden);
+          if (g.ok) {
+            this.stats.voice[layer.voice]++;
+            return esc(g.text);
+          }
+          this.stats.rejected[g.reason] = (this.stats.rejected[g.reason] ?? 0) + 1;
+          if (layer.voice === "persona" && ++this.personaRejections >= PERSONA_REJECTION_LIMIT) {
+            this.stats.personaDemoted = true;
+            this.opts.log?.({ event: "gm_persona_demoted", persona: this.opts.persona?.name, rejections: this.personaRejections });
+            break; // straight to Nox's own voice
+          }
+        } catch (e) {
+          this.stats.failures++;
+          this.opts.log?.({ event: "gm_error", beat: beat.kind, error: e instanceof Error ? e.message : String(e) });
+        }
       }
     }
+    this.stats.voice.template++;
     this.stats.fallbacks++;
     return null;
   }

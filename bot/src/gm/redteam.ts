@@ -60,6 +60,9 @@ export interface AttackResult {
   failures: string[];
   /** How many model outputs the guard had to reject (the model took the bait). */
   rejected: number;
+  /** Which voice wrote each beat, and whether the persona was set aside (F18-S06). */
+  voice: { persona: number; nox: number; template: number };
+  demoted: boolean;
   messages: string[];
 }
 
@@ -96,5 +99,5 @@ export async function runAttack(model: GmModel, a: Attack, lang: Lang = "id"): P
     }
   }
   const rejected = Object.values(n.stats.rejected).reduce((s, v) => s + v, 0);
-  return { id: a.id, passed: failures.length === 0, failures: [...new Set(failures)], rejected, messages };
+  return { id: a.id, passed: failures.length === 0, failures: [...new Set(failures)], rejected, voice: { ...n.stats.voice }, demoted: n.stats.personaDemoted, messages };
 }

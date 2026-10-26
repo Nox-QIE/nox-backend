@@ -142,3 +142,65 @@ describe("full game with the AI Game Master", () => {
     expect(beats.at(-1)!.roster).toHaveLength(5);
   });
 });
+
+describe("layered fallback (F18-S06)", () => {
+  const persona = { name: "Shady Agent", tagline: "", style: "MARKER-STYLE: speak like a carnival barker.", examples: [], langs: ["en" as const] };
+  const isPersona = (system: string) => system.includes("MARKER-STYLE");
+  /** Replies by which system prompt it got. */
+  class VoiceModel implements GmModel {
+    readonly model = "claude-opus-5-5";
+    systems: string[] = [];
+    constructor(private readonly reply: (persona: boolean) => string | Error) {}
+    async complete(system: string): Promise<GmCompletion> {
+      this.systems.push(system);
+      const r = this.reply(isPersona(system));
+      if (r instanceof Error) throw r;
+      return { text: r, usage: USAGE, model: this.model };
+    }
+  }
+
+  it("falls back from a rejected persona to Nox's own voice, then sets the persona aside", async () => {
+    const logs: Record<string, unknown>[] = [];
+    // The persona keeps slipping a link in; Nox's own prompt behaves.
+    const m = new VoiceModel((p) => (p ? "Step right up to nox-prize.xyz!" : "Fog settles over the square."));
+    const n = new LlmNarrator({ model: m, lang: "en", timeoutMs: 1000, persona, log: (l) => logs.push(l) });
+    const first = await n.intro(view, NAMES);
+    expect(first).toContain("Fog settles");
+    expect(m.systems.map(isPersona)).toEqual([true, true, false]);
+    await n.nightFalls(view); // third persona rejection → demoted, straight to Nox
+    expect(n.stats.personaDemoted).toBe(true);
+    expect(logs).toContainEqual(expect.objectContaining({ event: "gm_persona_demoted", persona: "Shady Agent", rejections: 3 }));
+    m.systems = [];
+    await n.morning(view, null, null);
+    expect(m.systems.map(isPersona)).toEqual([false]); // the persona is not asked again this game
+    expect(n.stats.voice).toEqual({ persona: 0, nox: 3, template: 0 });
+  });
+
+  it("uses the persona when it behaves, and errors do not count toward setting it aside", async () => {
+    let calls = 0;
+    const m = new VoiceModel((p) => (p && ++calls <= 4 ? new Error("timeout") : "The lanterns flicker."));
+    const n = new LlmNarrator({ model: m, lang: "en", timeoutMs: 1000, persona });
+    await n.intro(view, NAMES); // persona times out twice → Nox
+    await n.nightFalls(view); // persona times out twice → Nox
+    await n.morning(view, null, null); // persona answers
+    expect(n.stats.personaDemoted).toBe(false);
+    expect(n.stats.voice).toEqual({ persona: 1, nox: 2, template: 0 });
+  });
+
+  it("ends with the template when every voice fails", async () => {
+    const m = new VoiceModel(() => new Error("provider down"));
+    const n = new LlmNarrator({ model: m, lang: "en", timeoutMs: 1000, persona });
+    const text = await n.intro(view, NAMES);
+    expect(text).not.toContain("<i>");
+    expect(m.systems).toHaveLength(3); // persona x2, Nox x1
+    expect(n.stats.voice).toEqual({ persona: 0, nox: 0, template: 1 });
+  });
+
+  it("without a persona, Nox's own voice gets two tries", async () => {
+    const m = new VoiceModel(() => new Error("down"));
+    const n = new LlmNarrator({ model: m, lang: "en", timeoutMs: 1000 });
+    await n.intro(view, NAMES);
+    expect(m.systems).toHaveLength(2);
+    expect(n.stats.voice).toEqual({ persona: 0, nox: 0, template: 1 });
+  });
+});
