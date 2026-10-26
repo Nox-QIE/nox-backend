@@ -14,6 +14,7 @@ await bot.api.setMyCommands([
   { command: "start", description: "Enable DMs so you can receive your secret role" },
   { command: "privacy", description: "What Nox stores and what goes on-chain" },
   { command: "forget", description: "Delete your off-chain data (in a private chat with the bot)" },
+  { command: "pass", description: "Your Host Pass and game wallet (in a private chat with the bot)" },
 ]);
 
 const allowed_updates = ["message", "callback_query"] as const;

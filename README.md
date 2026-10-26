@@ -71,3 +71,7 @@ Selain persona hosted, agent bisa memakai layanan HTTPS milik pemiliknya: `agent
 ## Data & backup
 
 Di mana tiap data store desain (D1–D16) berada sekarang (store bot, chain, indeks), siapa yang boleh membaca/menulis, retensi, dan migrasi: [docs/data-model.md](docs/data-model.md). Store bot (`data/nox.db`) satu-satunya yang perlu di-backup: `npm run backup` (snapshot konsisten `VACUUM INTO`, simpan 14 terbaru; `NOX_BACKUP_DIR`, `NOX_BACKUP_KEEP`). Indeks dibangun ulang dari chain.
+
+## Host Pass
+
+`/pass` di chat pribadi menampilkan wallet game pemain, status Host Pass (dari `NoxPayments.passExpiry`), harga, dan cara bayar: dari wallet sendiri dengan `buyPassFor(<wallet game>, 1, <periode>, 0x0…0)`, sehingga Nox tidak pernah memakai dana pemain. Dengan `NOX_HOST_PASS=required`, tema, Game Master Marketplace, dan lobby lebih dari 8 pemain butuh Host Pass aktif milik host (dibaca on-chain, cache 5 menit; bila RPC gagal host tetap boleh lanjut dan kejadian dicatat). Scam Shield tetap gratis.

@@ -40,6 +40,9 @@ type Dict = {
   alreadyIn: string;
   inOtherGame: string;
   lobbyFull: string;
+  passNeeded: string;
+  passForMore: (max: number) => string;
+  passStatus: (p: { wallet: string; active: boolean; until: string | null; price: string | null; periodDays: number | null; payments: string; explorer: string }) => string;
   notLobby: string;
   onlyHost: string;
   needMore: (min: number) => string;
@@ -95,6 +98,17 @@ export const T: Record<Lang, Dict> = {
     alreadyIn: "Kamu sudah bergabung.",
     inOtherGame: "Kamu sedang ikut game lain.",
     lobbyFull: "Lobby penuh.",
+    passNeeded: "Tema dan Game Master Marketplace butuh Host Pass aktif untuk host. Host bisa ketik /pass di chat pribadi dengan bot.",
+    passForMore: (max) => `Lobby gratis maksimal ${max} pemain. Host butuh Host Pass untuk lebih banyak (ketik /pass di chat pribadi).`,
+    passStatus: (p) =>
+      [
+        `🎟 <b>Host Pass</b>: ${p.active ? `aktif sampai ${p.until}` : "belum aktif"}`,
+        "Host Pass membuka tema & Game Master Marketplace, dan lobby sampai 12 pemain.",
+        `Wallet game kamu: <code>${p.wallet}</code>`,
+        p.price
+          ? `Harga: ${p.price} QIE per ${p.periodDays} hari. Bayar dari wallet kamu sendiri dengan <code>buyPassFor(${p.wallet}, 1, &lt;jumlah periode&gt;, 0x0000000000000000000000000000000000000000)</code> di kontrak NoxPayments <a href="${p.explorer}">${p.payments}</a>, nilai = harga × periode. Pass langsung aktif untuk wallet game kamu.`
+          : "Host Pass belum dijual.",
+      ].join("\n"),
     notLobby: "Lobby sudah ditutup.",
     onlyHost: "Hanya host yang bisa memulai.",
     needMore: (min) => `Butuh minimal ${min} pemain.`,
@@ -162,6 +176,17 @@ export const T: Record<Lang, Dict> = {
     alreadyIn: "You already joined.",
     inOtherGame: "You are already in another game.",
     lobbyFull: "Lobby is full.",
+    passNeeded: "Themes and Marketplace Game Masters need an active Host Pass for the host. The host can type /pass in a private chat with the bot.",
+    passForMore: (max) => `Free lobbies take up to ${max} players. The host needs a Host Pass for more (type /pass in a private chat).`,
+    passStatus: (p) =>
+      [
+        `🎟 <b>Host Pass</b>: ${p.active ? `active until ${p.until}` : "not active"}`,
+        "A Host Pass unlocks themes, Marketplace Game Masters, and lobbies of up to 12 players.",
+        `Your game wallet: <code>${p.wallet}</code>`,
+        p.price
+          ? `Price: ${p.price} QIE per ${p.periodDays} days. Pay from your own wallet with <code>buyPassFor(${p.wallet}, 1, &lt;periods&gt;, 0x0000000000000000000000000000000000000000)</code> on the NoxPayments contract <a href="${p.explorer}">${p.payments}</a>, value = price × periods. The pass goes straight to your game wallet.`
+          : "Host Passes are not on sale yet.",
+      ].join("\n"),
     notLobby: "The lobby is closed.",
     onlyHost: "Only the host can start.",
     needMore: (min) => `Need at least ${min} players.`,

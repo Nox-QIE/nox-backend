@@ -63,6 +63,8 @@ export class Registry {
     if (this.byUser.has(hostId)) return { ok: false, text: t.inOtherGame };
     // This reply goes to the group, so it must not echo a raw display name.
     if (!this.startedUsers.has(hostId)) return { ok: false, text: t.needStart(esc(safeName(hostName, 1, lang)), this.deps.botUsername) };
+    // A theme picked with /newgame is a premium Game Master too.
+    if (opts.agentId !== undefined && this.deps.hostPass && !(await this.deps.hostPass(hostId))) return { ok: false, text: t.passNeeded };
     const room = new GameRoom(
       this.newId(),
       chatId,

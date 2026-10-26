@@ -15,6 +15,7 @@ import {
 import { ACTION_CODE, actionHash, commitRoles, configHash, randomBytes32, resultHash, ROLE_CODE, TEAM_CODE, type NightActionKind } from "@nox/shared/crypto-spec";
 import type { Hex } from "viem";
 import { noLedger, type GameLedger, type LedgerNightReveal } from "./chain/ledger.js";
+import { FREE_MAX_PLAYERS } from "./chain/passes.js";
 import { esc, roleName, T, type Lang } from "./i18n.js";
 import type { AgentRecord, Persona } from "./agents.js";
 import { safeName } from "./names.js";
@@ -44,6 +45,11 @@ export interface RoomDeps {
   store?: Store;
   /** Public dashboard (nox-frontend). When set, the game-over message links to the game's proof page. */
   webUrl?: string;
+  /**
+   * Whether a host may use premium lobby features (F03-S06, F14-S05): a theme or Marketplace Game
+   * Master, more than FREE_MAX_PLAYERS players. Unset = no gating (NOX_HOST_PASS=off).
+   */
+  hostPass?: (userId: number) => Promise<boolean>;
   /** A finished game narrated by a Marketplace agent: how its persona behaved (F18-S11). */
   onAgentGame?: (agentId: number, report: NarratorReport) => void;
 }
@@ -167,6 +173,7 @@ export class GameRoom {
       if (userId !== this.hostId) return { ok: false, text: this.t.onlyHost };
       const agent = this.lobbyAgents().find((a) => a.id === agentId);
       if (agentId !== 0 && !agent) return { ok: false, text: this.t.stale };
+      if (agentId !== 0 && this.deps.hostPass && !(await this.deps.hostPass(this.hostId))) return { ok: false, text: this.t.passNeeded };
       this.agentId = agent ? agent.id : null;
       if (this.lobbyMessageId !== null) {
         await this.deps.messenger.editGroup(this.chatId, this.lobbyMessageId, this.lobbyText(), this.lobbyKeyboard());
@@ -180,6 +187,9 @@ export class GameRoom {
       if (this.status !== "lobby") return { ok: false, text: this.t.notLobby };
       if (this.players.has(userId)) return { ok: false, text: this.t.alreadyIn };
       if (this.players.size >= MAX_PLAYERS) return { ok: false, text: this.t.lobbyFull };
+      if (this.players.size >= FREE_MAX_PLAYERS && this.deps.hostPass && !(await this.deps.hostPass(this.hostId))) {
+        return { ok: false, text: this.t.passForMore(FREE_MAX_PLAYERS) };
+      }
       this.players.set(userId, safeName(displayName, this.players.size + 1, this.lang));
       if (this.lobbyMessageId !== null) {
         await this.deps.messenger.editGroup(this.chatId, this.lobbyMessageId, this.lobbyText(), this.lobbyKeyboard());
