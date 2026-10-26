@@ -160,6 +160,14 @@ export class LlmNarrator implements Narrator {
       cost = c === null || cost === null ? null : cost + c;
     }
     this.opts.log?.({ event: "gm_usage", model: this.opts.model.model, ...this.stats, costUsd: cost });
-    return { ...this.stats.voice, rejected: this.personaRejections, demoted: this.stats.personaDemoted };
+    return {
+      ...this.stats.voice,
+      rejected: this.personaRejections,
+      demoted: this.stats.personaDemoted,
+      model: this.opts.model.model,
+      inputTokens: this.stats.usage.inputTokens + this.stats.usage.cacheReadTokens + this.stats.usage.cacheWriteTokens,
+      outputTokens: this.stats.usage.outputTokens,
+      costUsd: cost,
+    };
   }
 }

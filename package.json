@@ -14,7 +14,8 @@
     "indexer": "node --env-file=.env --import tsx bot/scripts/indexer.ts",
     "gas:report": "node --env-file=.env --import tsx bot/scripts/gas-report.ts",
     "report": "node --env-file=.env --import tsx bot/scripts/report.ts",
-    "backup": "node --env-file=.env --import tsx bot/scripts/backup.ts"
+    "backup": "node --env-file=.env --import tsx bot/scripts/backup.ts",
+    "ops:report": "node --env-file=.env --import tsx bot/scripts/ops-report.ts"
   },
   "devDependencies": {
     "typescript": "5.9",
