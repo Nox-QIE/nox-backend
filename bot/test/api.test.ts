@@ -6,12 +6,13 @@ import { createApi } from "../src/api.js";
 import { NoxCreditsAbi, NoxGameAbi } from "../src/chain/contracts.js";
 import { EventIndexer, EventStore } from "../src/chain/indexer.js";
 import { buildReport } from "../src/report.js";
+import { loginSecret, loginToken } from "../src/login.js";
 import { ava, ben, CREDITS, cy, FakeChain, GAME, game, gameId, playGame } from "./chain-fakes.js";
 
 let server: Server | undefined;
 afterEach(() => server?.close());
 
-async function setup(opts: { ratePerMinute?: number } = {}) {
+async function setup(opts: { ratePerMinute?: number; loginSecret?: Buffer } = {}) {
   const chain = new FakeChain();
   const store = new EventStore(":memory:");
   const indexer = new EventIndexer({
@@ -155,5 +156,36 @@ describe("public API", () => {
     const codes = [];
     for (let i = 0; i < 5; i++) codes.push((await get("/v1/health")).status);
     expect(codes).toEqual([200, 200, 200, 429, 429]);
+  });
+
+  it("trades a one-time login link for a session, and says whose it is (NOX-APP-14)", async () => {
+    const secret = loginSecret("ab".repeat(32))!;
+    const { get } = await setup({ loginSecret: secret });
+    const nowS = Math.floor(((1_790_000_000 + 200 * 4) * 1000 + 6 * 3600 * 1000) / 1000);
+    const post = (body: string) => get("/v1/login", { method: "POST", headers: { "content-type": "application/json" }, body });
+    const token = loginToken(secret, ben, nowS);
+    const ok = await post(JSON.stringify({ token }));
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get("cache-control")).toBe("no-store");
+    const { address, session } = await ok.json();
+    expect(address).toBe(ben.toLowerCase());
+    const again = await post(JSON.stringify({ token }));
+    expect([again.status, (await again.json()).error]).toEqual([401, "link already used"]);
+    expect((await post(JSON.stringify({ token: loginToken(secret, ben, nowS - 3600) }))).status).toBe(401); // expired
+    expect((await post("not json")).status).toBe(400);
+    const me = await get("/v1/me", { headers: { authorization: `Bearer ${session}` } });
+    expect(me.status).toBe(200);
+    expect(await me.json()).toMatchObject({ address: ben.toLowerCase(), stats: { credits: 30 } });
+    expect((await get("/v1/me")).status).toBe(401);
+    expect((await get("/v1/me", { headers: { authorization: `Bearer ${token}` } })).status).toBe(401); // a login token is no session
+    expect((await get("/v1/login")).status).toBe(405);
+    const pre = await get("/v1/login", { method: "OPTIONS" });
+    expect(pre.headers.get("access-control-allow-methods")).toContain("POST");
+  });
+
+  it("stays GET-only without a login secret", async () => {
+    const { get } = await setup();
+    expect((await get("/v1/login", { method: "POST", body: "{}" })).status).toBe(405);
+    expect((await get("/v1/me")).status).toBe(404);
   });
 });

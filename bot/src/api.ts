@@ -1,11 +1,14 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Address, Hex } from "viem";
 import type { EventStore } from "./chain/indexer.js";
+import { verifyToken, sessionToken, SESSION_TTL_S } from "./login.js";
 import { buildReport } from "./report.js";
 
 /**
  * Public read-only API (F12-D05) over the event index. Everything it serves is already public on
- * chain; the API only saves clients from scanning logs themselves. GET only, JSON, CORS open.
+ * chain; the API only saves clients from scanning logs themselves. GET only, JSON, CORS open. With a
+ * login secret it also takes POST /v1/login (a one-time token from the bot, for a session) and
+ * GET /v1/me (who the session belongs to), NOX-APP-14; those are never cached.
  * Responses are cached per URL until the index moves to a new block, and each IP gets a fixed
  * number of requests per minute.
  */
@@ -19,6 +22,8 @@ export interface ApiOptions {
   trustProxy?: boolean;
   now?: () => number;
   log?: (entry: Record<string, unknown>) => void;
+  /** NOX_LOGIN_SECRET: turns on POST /v1/login and GET /v1/me (web login, NOX-APP-14). */
+  loginSecret?: Buffer | null;
 }
 
 class HttpError extends Error {
@@ -147,14 +152,62 @@ export function createApi(o: ApiOptions): Server {
     res.end(res.req.method === "HEAD" ? undefined : body);
   };
 
+  const secret = o.loginSecret ?? null;
+  const nowS = () => Math.floor(now() / 1000);
+  const noStore = { "cache-control": "no-store" };
+
+  /** POST /v1/login {token}: spend the bot's one-time token, answer with a session for that wallet. */
+  const login = (req: IncomingMessage, res: ServerResponse) => {
+    let raw = "";
+    let tooBig = false;
+    req.on("data", (chunk: Buffer) => {
+      raw += chunk.toString("utf8");
+      if (raw.length > 2048) tooBig = true;
+    });
+    req.on("end", () => {
+      if (tooBig) return send(res, 413, JSON.stringify({ error: "body too large" }), noStore);
+      let token: unknown;
+      try {
+        token = (JSON.parse(raw) as { token?: unknown }).token;
+      } catch {
+        return send(res, 400, JSON.stringify({ error: "body must be JSON with a token" }), noStore);
+      }
+      if (typeof token !== "string") return send(res, 400, JSON.stringify({ error: "body must be JSON with a token" }), noStore);
+      const c = verifyToken(secret!, token, "login", nowS());
+      if ("error" in c) return send(res, 401, JSON.stringify({ error: c.error }), noStore);
+      if (!o.store.useLoginNonce(c.n!, c.e, nowS())) return send(res, 401, JSON.stringify({ error: "link already used" }), noStore);
+      o.log?.({ event: "web_login", address: c.a });
+      send(res, 200, JSON.stringify({ address: c.a, session: sessionToken(secret!, c.a, nowS()), expiresAt: nowS() + SESSION_TTL_S }), noStore);
+    });
+  };
+
+  /** GET /v1/me with "Authorization: Bearer <session>": the wallet the session belongs to. */
+  const me = (req: IncomingMessage, res: ServerResponse) => {
+    const auth = String(req.headers.authorization ?? "");
+    const c = auth.startsWith("Bearer ") ? verifyToken(secret!, auth.slice(7).trim(), "session", nowS()) : { error: "missing session" };
+    if ("error" in c) return send(res, 401, JSON.stringify({ error: c.error }), noStore);
+    send(res, 200, JSON.stringify({ address: c.a, expiresAt: c.e, stats: o.store.playerStats(c.a as Address) }), noStore);
+  };
+
   return createServer((req, res) => {
     if (req.method === "OPTIONS") {
-      res.writeHead(204, { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, HEAD, OPTIONS", "access-control-max-age": "86400" });
+      res.writeHead(204, {
+        "access-control-allow-origin": "*",
+        "access-control-allow-methods": secret ? "GET, HEAD, POST, OPTIONS" : "GET, HEAD, OPTIONS",
+        ...(secret ? { "access-control-allow-headers": "content-type, authorization" } : {}),
+        "access-control-max-age": "86400",
+      });
       res.end();
       return;
     }
-    if (req.method !== "GET" && req.method !== "HEAD") return send(res, 405, JSON.stringify({ error: "only GET" }), { allow: "GET, HEAD, OPTIONS" });
+    const path = (req.url ?? "/").split("?")[0]!.replace(/\/+$/, "");
+    const isLogin = secret !== null && path === "/v1/login";
+    if (isLogin ? req.method !== "POST" : req.method !== "GET" && req.method !== "HEAD") {
+      return send(res, 405, JSON.stringify({ error: isLogin ? "only POST" : "only GET" }), { allow: isLogin ? "POST, OPTIONS" : "GET, HEAD, OPTIONS" });
+    }
     if (!allow(clientIp(req))) return send(res, 429, JSON.stringify({ error: "too many requests" }), { "retry-after": "60" });
+    if (isLogin) return login(req, res);
+    if (secret !== null && path === "/v1/me") return me(req, res);
 
     try {
       const url = new URL(req.url ?? "/", "http://api");

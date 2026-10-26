@@ -1,3 +1,4 @@
+import { loginSecret } from "./login.js";
 import { storeKeyring } from "./store-keys.js";
 import type { GmProvider } from "./gm/model.js";
 import { DEFAULT_TIMINGS, type Timings } from "./ports.js";
@@ -56,6 +57,8 @@ export interface Config {
   webUrl?: string;
   /** Telegram user id that gets incident alerts by DM (it must have pressed Start). Optional. */
   operatorChatId?: number;
+  /** NOX_LOGIN_SECRET: the bot signs one-time web login links with it (NOX-APP-14). */
+  loginSecret?: Buffer;
   /** Who sells rupiah passes by invoice (a Telegram @handle or e-mail), shown in /pass (F14-D04). */
   paymentContact?: string;
   /** The indexer's public API (npm run indexer), for player stats in the bot. Optional. */
@@ -120,6 +123,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ...(env.NOX_WEB_URL ? { webUrl: env.NOX_WEB_URL } : {}),
     ...(env.NOX_OPERATOR_CHAT_ID ? { operatorChatId: chatId(env.NOX_OPERATOR_CHAT_ID) } : {}),
     ...(env.NOX_PAYMENT_CONTACT ? { paymentContact: env.NOX_PAYMENT_CONTACT } : {}),
+    ...(env.NOX_LOGIN_SECRET ? { loginSecret: loginSecret(env.NOX_LOGIN_SECRET)! } : {}),
     ...(env.NOX_API_URL ? { apiUrl: env.NOX_API_URL.replace(/\/+$/, "") } : {}),
     ...(env.NOX_WEBHOOK_URL ? { webhook: loadWebhook(env) } : {}),
     rateLimit: parseRateLimit(env.NOX_RATE_LIMIT || "20/10"),
@@ -265,7 +269,8 @@ export interface IndexerConfig {
   /** Minutes between credits reconciliations (balanceOf vs index); null = off. */
   reconcileMinutes: number | null;
   /** Public read-only API; null = off. Binds to localhost by default (put a reverse proxy in front). */
-  api: { port: number; host: string; trustProxy: boolean; ratePerMinute: number } | null;
+  /** `loginSecret`: NOX_LOGIN_SECRET, for web login (NOX-APP-14); null keeps the API read-only. */
+  api: { port: number; host: string; trustProxy: boolean; ratePerMinute: number; loginSecret: Buffer | null } | null;
 }
 
 /** The indexer only reads public chain data, so it needs no operator key or wallet secret. */
@@ -299,7 +304,7 @@ export function loadIndexerConfig(env: NodeJS.ProcessEnv = process.env): Indexer
     const rate = Number(env.NOX_API_RATE_PER_MINUTE || 120);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('NOX_API_PORT must be a port number or "off"');
     if (!Number.isInteger(rate) || rate < 1) throw new Error("NOX_API_RATE_PER_MINUTE must be a whole number ≥ 1");
-    c.api = { port, host: env.NOX_API_HOST || "127.0.0.1", trustProxy: env.NOX_API_TRUST_PROXY === "1", ratePerMinute: rate };
+    c.api = { port, host: env.NOX_API_HOST || "127.0.0.1", trustProxy: env.NOX_API_TRUST_PROXY === "1", ratePerMinute: rate, loginSecret: loginSecret(env.NOX_LOGIN_SECRET) };
   }
   const registry = address("NOX_AGENT_REGISTRY_ADDRESS");
   const payments = address("NOX_PAYMENTS_ADDRESS");

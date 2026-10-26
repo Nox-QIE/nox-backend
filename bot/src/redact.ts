@@ -6,7 +6,7 @@ import { format } from "node:util";
  * secret) and each is replaced, so a key leaked into an error message by any library (an RPC error,
  * a grammY request URL) is still hidden. Hex secrets match with or without 0x, in any letter case.
  */
-export const SECRET_ENV = ["NOX_OPERATOR_KEY", "NOX_WALLET_SECRET", "BOT_TOKEN", "OXION_API_KEY", "ANTHROPIC_API_KEY", "NOX_WEBHOOK_SECRET", "NOX_STORE_KEYS"] as const;
+export const SECRET_ENV = ["NOX_OPERATOR_KEY", "NOX_WALLET_SECRET", "BOT_TOKEN", "OXION_API_KEY", "ANTHROPIC_API_KEY", "NOX_WEBHOOK_SECRET", "NOX_STORE_KEYS", "NOX_LOGIN_SECRET"] as const;
 const MIN_SECRET = 16; // shorter values would hide ordinary text and are no real secret
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

@@ -23,6 +23,7 @@ The design (vault 10.04, DFD level 1) plans data stores D1–D16 in Postgres. Th
 | Discussion activity (F07-D06) | bot `finished_games.discussion` (messages per discussion, JSON array; null when Telegram privacy mode hides group messages) and `.nudges` | counts only, never text or authors | – | with the game row |
 | D14 Gas & tx ledger | bot `chain_txs` (step, from, to, hash, status, gas, fee, attempts, error; for gas drips also reason `onboarding` / `top-up` and the QIE sent), `operator_balances` | | | kept |
 | D15 Event index | index `chain_events`, `chain_checkpoints` | | | rebuildable |
+| Web sign-in (NOX-APP-14) | index `used_logins` (nonce, expiry) | spent one-time login nonces; sessions are signed tokens and are not stored | `NOX_LOGIN_SECRET`, shared by bot and API only | until the login token expires |
 | D16 Agents & revenue | bot `agents` (owner, persona, mode, endpoint, **secret**, status, chain id, accepted terms version and time), `agent_games`, `agent_moderation`; chain `NoxAgentRegistry` (share, metadata hash); revenue from `NoxPayments` events in the index | | endpoint secret **AES-256-GCM**, same versioned key as D5 | kept |
 | D11–D13 Guilds, creators, hosts | not built (phase 2) | | | |
 

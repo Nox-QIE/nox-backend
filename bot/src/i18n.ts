@@ -47,6 +47,9 @@ type Dict = {
   passRupiah: (wallet: string, contact: string | null) => string;
   countrySet: (country: string, rupiah: boolean) => string;
   countryUsage: string;
+  /** /web (NOX-APP-14): a one-time login link to the web app. */
+  webLogin: (link: string, minutes: number) => string;
+  webOff: string;
   notLobby: string;
   onlyHost: string;
   needMore: (min: number) => string;
@@ -117,6 +120,9 @@ export const T: Record<Lang, Dict> = {
       `🇮🇩 Bayar dengan rupiah: minta invoice ke ${contact ? esc(contact) : "admin Nox"} dan sebutkan wallet game di atas. Setelah dana masuk, pass dicatat di blockchain QIE untuk wallet <code>${wallet}</code>. Bukan di Indonesia? Ketik /negara diikuti kode negara (mis. /negara SG).`,
     countrySet: (c, rupiah) => `Negara disimpan: ${c}. ${rupiah ? "Pass dibayar dengan rupiah lewat invoice." : "Pass dibayar dengan QIE atau QUSDC dari wallet kamu sendiri."} Cek /pass.`,
     countryUsage: "Ketik /negara diikuti kode negara dua huruf, mis. /negara ID atau /negara SG. Dipakai hanya untuk memilih cara bayar.",
+    webLogin: (link, m) =>
+      `🔑 Masuk ke web Nox: <a href="${link}">buka tautan ini</a>.\nBerlaku ${m} menit dan hanya bisa dipakai sekali. Jangan teruskan ke siapa pun: siapa pun yang membukanya masuk sebagai kamu.`,
+    webOff: "Masuk lewat web belum tersedia.",
     notLobby: "Lobby sudah ditutup.",
     onlyHost: "Hanya host yang bisa memulai.",
     needMore: (min) => `Butuh minimal ${min} pemain.`,
@@ -199,6 +205,9 @@ export const T: Record<Lang, Dict> = {
       `🇮🇩 Pay in rupiah: ask ${contact ? esc(contact) : "a Nox admin"} for an invoice and quote the game wallet above. Once the funds arrive, the pass is recorded on the QIE blockchain for <code>${wallet}</code>. Not in Indonesia? Send /country with your country code (e.g. /country SG).`,
     countrySet: (c, rupiah) => `Country saved: ${c}. ${rupiah ? "Passes are paid in rupiah by invoice." : "Passes are paid in QIE or QUSDC from your own wallet."} See /pass.`,
     countryUsage: "Send /country with a two-letter country code, e.g. /country SG or /country ID. It is only used to pick how you pay.",
+    webLogin: (link, m) =>
+      `🔑 Sign in to the Nox web app: <a href="${link}">open this link</a>.\nIt works for ${m} minutes and only once. Do not forward it: whoever opens it is signed in as you.`,
+    webOff: "Web sign-in is not available yet.",
     notLobby: "The lobby is closed.",
     onlyHost: "Only the host can start.",
     needMore: (min) => `Need at least ${min} players.`,

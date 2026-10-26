@@ -6,6 +6,7 @@ import { noLedger, type GameLedger } from "./chain/ledger.js";
 import { chainFor, rpcTransport, ViemLedger, type PlayerReward, type ViemLedgerOptions } from "./chain/viem-ledger.js";
 import { PassReader, type PassClient } from "./chain/passes.js";
 import { countryGuess, parseCountry, payRail, type PayRail } from "./pay-rail.js";
+import { LOGIN_TTL_S, loginLink, loginToken } from "./login.js";
 import { GameNights } from "./gamenight.js";
 import { Practice, PRACTICE, PRACTICE_PAYLOADS, practiceLink } from "./practice.js";
 import { AlertMonitor } from "./alerts.js";
@@ -289,7 +290,7 @@ export async function passReply(a: {
 }
 
 /** Wire Telegram updates to the registry. Nox stays a regular bot: no Mini App / Web App buttons. */
-export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, apiUrl, timings, gm, chain, rateLimit, hostPass, nudge, paymentContact }: Config) {
+export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, apiUrl, timings, gm, chain, rateLimit, hostPass, nudge, paymentContact, loginSecret }: Config) {
   const bot = new Bot(botToken);
   await bot.init();
   // First middleware: refused updates never reach the game.
@@ -365,6 +366,16 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
       ...(paymentContact ? { contact: paymentContact } : {}),
     }).catch(() => T[lang].stale);
     await ctx.reply(text, { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
+  });
+  // /web, /masuk: a one-time sign-in link to the web app for this player's game wallet (NOX-APP-14).
+  bot.command(["web", "masuk"], async (ctx) => {
+    if (ctx.chat.type !== "private" || !ctx.from) return;
+    const t = T[langFrom(ctx.from.language_code)];
+    const wallet = ledger.addressOf(ctx.from.id);
+    if (!loginSecret || !webUrl || !wallet) return void (await ctx.reply(t.webOff));
+    registry.markStarted(ctx.from.id);
+    const link = loginLink(webUrl, loginToken(loginSecret, wallet, Math.floor(Date.now() / 1000)));
+    await ctx.reply(t.webLogin(link, LOGIN_TTL_S / 60), { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
   });
   // /negara ID, /country SG: the player's own country, which only picks the payment rail (F14-D04).
   bot.command(["negara", "country"], async (ctx) => {
