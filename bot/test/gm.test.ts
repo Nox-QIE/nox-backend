@@ -204,3 +204,45 @@ describe("layered fallback (F18-S06)", () => {
     expect(n.stats.voice).toEqual({ persona: 0, nox: 0, template: 1 });
   });
 });
+
+describe("guard: links and money that the old lists missed (red-team of endpoints)", () => {
+  it("catches any domain, spaced or spelled-out dots, and invisible characters", () => {
+    for (const bad of [
+      "Claim your prize at nox-gift.click",
+      "Visit nox-bonus.shop tonight",
+      "Go to nox-gift . click",
+      "nox-gift dot click for a gift",
+      "buka nox-gift (titik) click",
+      "nox​-gift​.click", // zero-width spaces
+      "free.qie.network rewards",
+    ]) {
+      expect(checkNarration(bad, []).ok, bad).toBe(false);
+    }
+  });
+
+  it("catches wallet addresses, amounts with a currency, and requests to pay", () => {
+    for (const bad of [
+      "Send 0.1 QIE to 0x1111111111111111111111111111111111111111",
+      "Only 50.000 rupiah to unlock the next mission",
+      "Bayar Rp 50.000 dulu",
+      "kirim saja 5 USDT ke admin",
+      "Cash out your credits after the game",
+      "Bagikan kode OTP kepada admin",
+    ]) {
+      expect(checkNarration(bad, []).ok, bad).toBe(false);
+    }
+  });
+
+  it("still lets ordinary narration through", () => {
+    for (const ok of [
+      "The night ends. Morning comes slowly over the hills.",
+      "Kabut pagi ini tidak mau pergi dari halaman. Kentongan dipukul tiga kali.",
+      "Admin mengirim tangkapan layar pembayaran, terlalu rapi untuk dipercaya.",
+      "Three lanterns. Two shadows. One empty chair.",
+      "Notifikasi grup berbunyi lagi: \"Misi baru! Komisi 3x lipat, slot tinggal sedikit.\"",
+      "It was 3.5 hours before dawn.",
+    ]) {
+      expect(checkNarration(ok, []), ok).toEqual({ ok: true, text: ok });
+    }
+  });
+});
