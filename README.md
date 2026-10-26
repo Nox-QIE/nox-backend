@@ -89,3 +89,7 @@ Di mana tiap data store desain (D1–D16) berada sekarang (store bot, chain, ind
 ## Pancingan diskusi
 
 Saat diskusi sepi, Game Master melempar satu pertanyaan terbuka di tengah waktu diskusi (tanpa menyebut atau mengarah ke siapa pun; guard tetap berlaku, template sebagai cadangan). `NOX_DISCUSSION_NUDGE=quiet` (default) hanya bekerja bila bot bisa membaca pesan grup (BotFather → Group Privacy → Disable): pancingan muncul bila pesan masih lebih sedikit dari jumlah pemain hidup. `always` = sekali tiap diskusi, `off` = mati. Pesan grup hanya dihitung, tidak disimpan atau dibaca lebih jauh.
+
+## Uji di testnet
+
+`npm run sim:game` memainkan satu game 5 pemain lewat GameRoom + ViemLedger asli di chain `.env` (tanpa Telegram) dan mencetak status on-chain, credits per pemain, dan gas per langkah. `npm run sim:game -- --scamshield` memainkan mode Scam Shield; bila grup menang, lencana Scam Spotter diberikan di NoxBadges (`NOX_BADGES_ADDRESS`) dan jumlahnya per pemain dicetak.
