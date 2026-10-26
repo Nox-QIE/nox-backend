@@ -99,5 +99,15 @@ describe("/pass", () => {
     expect(text).toContain(`buyPassFor(0x00000000000000000000000000000000000000aa, 1,`);
     expect(text).toContain(`https://testnet.qie.digital/address/${PAYMENTS}`);
     expect(await passReply({ ledger: noLedger, passes: null, userId: 1, lang: "en" })).toContain("not on sale yet");
+    expect(text).not.toContain("rupiah"); // no rail given: on chain only
+  });
+
+  it("adds the rupiah invoice route for accounts in Indonesia (F14-D04)", async () => {
+    const passes = new PassReader({ client: fakeClient({}).client, payments: PAYMENTS, now: () => 1_800_000_000_000 });
+    const id = await passReply({ ledger, passes, payments: PAYMENTS, userId: 1, lang: "id", rail: "rupiah", contact: "@nox_sales" });
+    expect(id).toContain("Bayar dengan rupiah: minta invoice ke @nox_sales");
+    expect(id).toContain("buyPassFor("); // paying on chain stays possible
+    const global = await passReply({ ledger, passes, payments: PAYMENTS, userId: 1, lang: "en", rail: "onchain" });
+    expect(global).not.toContain("rupiah");
   });
 });

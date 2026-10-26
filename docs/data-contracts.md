@@ -15,6 +15,7 @@ Commands:
 | `/pass` | host, private chat | – | shows Host Pass status (read on chain) |
 | `/latihan`, `/practice` | anyone, private chat | – | Scam Shield practice quiz |
 | `/privacy`, `/privasi` | anyone | – | privacy notice |
+| `/negara`, `/country` | player, private chat | two-letter country code, e.g. `/negara ID` | sets the account's country, used only to pick the payment rail (Indonesia: rupiah invoice; elsewhere: QIE/QUSDC on chain). The first guess comes from the Telegram language |
 | `/forget`, `/lupakan` | player | confirmed with the `f:yes` button | deletes the account (right to erasure) |
 
 Button callback data, at most 64 bytes as Telegram requires. `<room>` is the lobby id, `<round>` the round number, `<target>` a seat id:

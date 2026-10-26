@@ -83,8 +83,10 @@ export interface Store {
    * D1 player account (F01-D01): created on the first Start, updated on later ones (idempotent).
    * `address` is the player's derived game wallet; returns whether the account is new.
    */
-  upsertUser(userId: number, u: { locale: Lang; address: string | null }): { isNew: boolean };
+  upsertUser(userId: number, u: { locale: Lang; address: string | null; country?: string | null }): { isNew: boolean };
   getUser(userId: number): PlayerAccount | null;
+  /** The player's own country choice (/negara), which picks the payment rail (F14-D04). */
+  setUserCountry(userId: number, country: string): boolean;
   saveGame(gameId: Hex, chatId: number, lang: Lang, secret: GameSecret): void;
   updateSecret(gameId: Hex, secret: GameSecret): void;
   markEnded(gameId: Hex, payload: FinalizePayload): void;
@@ -206,6 +208,8 @@ export interface PlayerAccount {
   status: "active";
   startedAt: number;
   lastSeen: number | null;
+  /** Two-letter country, for the payment rail only (F14-D04): guessed from the language or set with /negara. */
+  country: string | null;
 }
 
 export interface StoredTx extends TxRecord {
@@ -393,6 +397,7 @@ export class SqliteStore implements Store {
     if (!txCols.has("value_wei")) this.db.exec("ALTER TABLE chain_txs ADD COLUMN value_wei TEXT");
     if (!userCols.has("status")) this.db.exec("ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
     if (!userCols.has("last_seen")) this.db.exec("ALTER TABLE users ADD COLUMN last_seen INTEGER");
+    if (!userCols.has("country")) this.db.exec("ALTER TABLE users ADD COLUMN country TEXT");
     // One wallet per account: derived wallets are unique by construction, the index makes it a rule.
     this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS users_address ON users (address) WHERE address IS NOT NULL");
     const fgCols = new Set((this.db.prepare("PRAGMA table_info(finished_games)").all() as { name: string }[]).map((c) => c.name));
@@ -468,7 +473,7 @@ export class SqliteStore implements Store {
     return (this.db.prepare("SELECT telegram_id FROM users").all() as { telegram_id: number }[]).map((r) => r.telegram_id);
   }
 
-  upsertUser(userId: number, u: { locale: Lang; address: string | null }) {
+  upsertUser(userId: number, u: { locale: Lang; address: string | null; country?: string | null }) {
     const now = Date.now();
     const before = this.db.prepare("SELECT address FROM users WHERE telegram_id = ?").get(userId) as { address: string | null } | undefined;
     const existed = before !== undefined;
@@ -477,11 +482,17 @@ export class SqliteStore implements Store {
     if (u.address && !before?.address) this.audit(u.address, "created", "start");
     this.db
       .prepare(
-        `INSERT INTO users (telegram_id, started_at, locale, address, last_seen) VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT (telegram_id) DO UPDATE SET locale = excluded.locale, address = COALESCE(users.address, excluded.address), last_seen = excluded.last_seen`,
+        // A guessed country never overwrites one already there (the player's own choice included).
+        `INSERT INTO users (telegram_id, started_at, locale, address, last_seen, country) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (telegram_id) DO UPDATE SET locale = excluded.locale, address = COALESCE(users.address, excluded.address), last_seen = excluded.last_seen,
+           country = COALESCE(users.country, excluded.country)`,
       )
-      .run(userId, now, u.locale, u.address, now);
+      .run(userId, now, u.locale, u.address, now, u.country ?? null);
     return { isNew: !existed };
+  }
+
+  setUserCountry(userId: number, country: string) {
+    return Number(this.db.prepare("UPDATE users SET country = ? WHERE telegram_id = ?").run(country, userId).changes) > 0;
   }
 
   getUser(userId: number): PlayerAccount | null {
@@ -494,6 +505,7 @@ export class SqliteStore implements Store {
           status: "active",
           startedAt: Number(r.started_at),
           lastSeen: r.last_seen == null ? null : Number(r.last_seen),
+          country: (r.country as string | null) ?? null,
         }
       : null;
   }

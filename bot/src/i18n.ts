@@ -43,6 +43,10 @@ type Dict = {
   passNeeded: string;
   passForMore: (max: number) => string;
   passStatus: (p: { wallet: string; active: boolean; until: string | null; price: string | null; periodDays: number | null; payments: string; explorer: string }) => string;
+  /** Rupiah rail (F14-D04): pay by invoice; the operator records the pass on chain. */
+  passRupiah: (wallet: string, contact: string | null) => string;
+  countrySet: (country: string, rupiah: boolean) => string;
+  countryUsage: string;
   notLobby: string;
   onlyHost: string;
   needMore: (min: number) => string;
@@ -109,6 +113,10 @@ export const T: Record<Lang, Dict> = {
           ? `Harga: ${p.price} QIE per ${p.periodDays} hari. Bayar dari wallet kamu sendiri dengan <code>buyPassFor(${p.wallet}, 1, &lt;jumlah periode&gt;, 0x0000000000000000000000000000000000000000)</code> di kontrak NoxPayments <a href="${p.explorer}">${p.payments}</a>, nilai = harga × periode. Pass langsung aktif untuk wallet game kamu.`
           : "Host Pass belum dijual.",
       ].join("\n"),
+    passRupiah: (wallet, contact) =>
+      `🇮🇩 Bayar dengan rupiah: minta invoice ke ${contact ? esc(contact) : "admin Nox"} dan sebutkan wallet game di atas. Setelah dana masuk, pass dicatat di blockchain QIE untuk wallet <code>${wallet}</code>. Bukan di Indonesia? Ketik /negara diikuti kode negara (mis. /negara SG).`,
+    countrySet: (c, rupiah) => `Negara disimpan: ${c}. ${rupiah ? "Pass dibayar dengan rupiah lewat invoice." : "Pass dibayar dengan QIE atau QUSDC dari wallet kamu sendiri."} Cek /pass.`,
+    countryUsage: "Ketik /negara diikuti kode negara dua huruf, mis. /negara ID atau /negara SG. Dipakai hanya untuk memilih cara bayar.",
     notLobby: "Lobby sudah ditutup.",
     onlyHost: "Hanya host yang bisa memulai.",
     needMore: (min) => `Butuh minimal ${min} pemain.`,
@@ -138,7 +146,7 @@ export const T: Record<Lang, Dict> = {
     gmDefault: "🌙 Nox (bawaan)",
     gmPicked: (n) => `Game Master: ${n}`,
     privacy: (url) =>
-      `🔒 <b>Privasi di Nox</b>\n• Disimpan: ID Telegram-mu (agar bot bisa mengirim DM) dan data game terenkripsi sampai game selesai di blockchain, lalu dihapus dalam 30 hari.\n• Nama tampilanmu hanya dipakai selama game; nama pemain yang tersingkir dan daftar akhir dikirim ke penyedia AI untuk narasi.\n• Di blockchain QIE (publik & permanen): alamat wallet game-mu, gabung, vote, hash aksi malam, dan peran yang dibuka di akhir.\n• Obrolan werewolf diteruskan, tidak disimpan.\n• /lupakan menghapus data off-chain milikmu.` + (url ? `\n\nSelengkapnya: ${url}` : ""),
+      `🔒 <b>Privasi di Nox</b>\n• Disimpan: ID Telegram-mu (agar bot bisa mengirim DM), kode negara (hanya untuk memilih cara bayar; ditebak dari bahasa akun, ubah dengan /negara), dan data game terenkripsi sampai game selesai di blockchain, lalu dihapus dalam 30 hari.\n• Nama tampilanmu hanya dipakai selama game; nama pemain yang tersingkir dan daftar akhir dikirim ke penyedia AI untuk narasi.\n• Di blockchain QIE (publik & permanen): alamat wallet game-mu, gabung, vote, hash aksi malam, dan peran yang dibuka di akhir.\n• Obrolan werewolf diteruskan, tidak disimpan.\n• /lupakan menghapus data off-chain milikmu.` + (url ? `\n\nSelengkapnya: ${url}` : ""),
     forgetAsk: "Hapus data off-chain milikmu dari Nox (ID Telegram dan kaitanmu sebagai host)? Data di blockchain tidak bisa dihapus. Kamu perlu menekan Start lagi untuk bermain.",
     forgetBtn: "Ya, hapus dataku",
     forgetDone: "Data off-chain milikmu sudah dihapus.",
@@ -187,6 +195,10 @@ export const T: Record<Lang, Dict> = {
           ? `Price: ${p.price} QIE per ${p.periodDays} days. Pay from your own wallet with <code>buyPassFor(${p.wallet}, 1, &lt;periods&gt;, 0x0000000000000000000000000000000000000000)</code> on the NoxPayments contract <a href="${p.explorer}">${p.payments}</a>, value = price × periods. The pass goes straight to your game wallet.`
           : "Host Passes are not on sale yet.",
       ].join("\n"),
+    passRupiah: (wallet, contact) =>
+      `🇮🇩 Pay in rupiah: ask ${contact ? esc(contact) : "a Nox admin"} for an invoice and quote the game wallet above. Once the funds arrive, the pass is recorded on the QIE blockchain for <code>${wallet}</code>. Not in Indonesia? Send /country with your country code (e.g. /country SG).`,
+    countrySet: (c, rupiah) => `Country saved: ${c}. ${rupiah ? "Passes are paid in rupiah by invoice." : "Passes are paid in QIE or QUSDC from your own wallet."} See /pass.`,
+    countryUsage: "Send /country with a two-letter country code, e.g. /country SG or /country ID. It is only used to pick how you pay.",
     notLobby: "The lobby is closed.",
     onlyHost: "Only the host can start.",
     needMore: (min) => `Need at least ${min} players.`,
@@ -216,7 +228,7 @@ export const T: Record<Lang, Dict> = {
     gmDefault: "🌙 Nox (default)",
     gmPicked: (n) => `Game Master: ${n}`,
     privacy: (url) =>
-      `🔒 <b>Privacy at Nox</b>\n• Stored: your Telegram ID (so the bot can DM you) and encrypted game data until the game is settled on-chain, then deleted within 30 days.\n• Your display name is only used during a game; names of eliminated players and the final roster are sent to the AI provider for narration.\n• On the QIE blockchain (public and permanent): your game wallet address, joins, votes, night action hashes, and roles revealed at the end.\n• Werewolf chat is relayed, not stored.\n• /forget deletes your off-chain data.` + (url ? `\n\nFull policy: ${url}` : ""),
+      `🔒 <b>Privacy at Nox</b>\n• Stored: your Telegram ID (so the bot can DM you), a country code (only to pick how you pay; guessed from your account language, change it with /country), and encrypted game data until the game is settled on-chain, then deleted within 30 days.\n• Your display name is only used during a game; names of eliminated players and the final roster are sent to the AI provider for narration.\n• On the QIE blockchain (public and permanent): your game wallet address, joins, votes, night action hashes, and roles revealed at the end.\n• Werewolf chat is relayed, not stored.\n• /forget deletes your off-chain data.` + (url ? `\n\nFull policy: ${url}` : ""),
     forgetAsk: "Delete your off-chain data from Nox (your Telegram ID and your link as a host)? Blockchain data cannot be deleted. You will need to press Start again to play.",
     forgetBtn: "Yes, delete my data",
     forgetDone: "Your off-chain data has been deleted.",
