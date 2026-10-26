@@ -1,7 +1,7 @@
 import { Bot, GrammyError, InlineKeyboard } from "grammy";
 import { randomInt } from "node:crypto";
 import type { Hex } from "viem";
-import { esc, langFrom, T } from "./i18n.js";
+import { esc, langFrom, T, type Lang, type PlayerStatsLite } from "./i18n.js";
 import { noLedger, type GameLedger } from "./chain/ledger.js";
 import { chainFor, ViemLedger, type PlayerReward, type ViemLedgerOptions } from "./chain/viem-ledger.js";
 import { qie, TreasuryWatch } from "./treasury.js";
@@ -214,8 +214,40 @@ export function onAgentGame(a: { store: Store; messenger: Messenger; operatorCha
   };
 }
 
+/** A player's public stats from the indexer API (D7 mirror), or null when it is not reachable. */
+export function statsFromApi(apiUrl: string, timeoutMs = 2000) {
+  return async (address: string): Promise<PlayerStatsLite | null> => {
+    const res = await fetch(`${apiUrl}/v1/players/${address}`, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { stats?: PlayerStatsLite | null };
+    return body.stats ?? null;
+  };
+}
+
+/**
+ * /start in a private chat (F01-S01): create or update the D1 account (locale, derived wallet
+ * address), allow DMs, then greet. A returning player gets their stats (F01-S06) when the indexer
+ * API answers; otherwise a plain welcome back. Idempotent: pressing Start again never duplicates.
+ */
+export async function startReply(a: {
+  registry: Registry;
+  store?: Store;
+  ledger: GameLedger;
+  userId: number;
+  lang: Lang;
+  statsFor?: (address: string) => Promise<PlayerStatsLite | null>;
+}): Promise<string> {
+  const address = a.ledger.addressOf(a.userId);
+  const isNew = a.store ? a.store.upsertUser(a.userId, { locale: a.lang, address }).isNew : !a.registry.startedUsers.has(a.userId);
+  a.registry.markStarted(a.userId);
+  const t = T[a.lang];
+  if (isNew) return t.welcome;
+  const stats = address && a.statsFor ? await a.statsFor(address).catch(() => null) : null;
+  return t.welcomeBack(stats);
+}
+
 /** Wire Telegram updates to the registry. Nox stays a regular bot: no Mini App / Web App buttons. */
-export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, timings, gm, chain, rateLimit }: Config) {
+export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, apiUrl, timings, gm, chain, rateLimit }: Config) {
   const bot = new Bot(botToken);
   await bot.init();
   // First middleware: refused updates never reach the game.
@@ -243,10 +275,11 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, t
   });
   await recoverGames(store, ledger, messenger, logLine);
 
+  const statsFor = apiUrl ? statsFromApi(apiUrl) : undefined;
   bot.command("start", async (ctx) => {
     if (ctx.chat.type !== "private" || !ctx.from) return;
-    registry.markStarted(ctx.from.id);
-    await ctx.reply(T[langFrom(ctx.from.language_code)].welcome, { parse_mode: "HTML" });
+    const text = await startReply({ registry, store, ledger, userId: ctx.from.id, lang: langFrom(ctx.from.language_code), ...(statsFor ? { statsFor } : {}) });
+    await ctx.reply(text, { parse_mode: "HTML" });
   });
 
   bot.command(["privacy", "privasi"], async (ctx) => {

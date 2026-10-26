@@ -44,6 +44,12 @@ export interface GameRecord {
 export interface Store {
   startedUsers(): number[];
   addStartedUser(userId: number): void;
+  /**
+   * D1 player account (F01-D01): created on the first Start, updated on later ones (idempotent).
+   * `address` is the player's derived game wallet; returns whether the account is new.
+   */
+  upsertUser(userId: number, u: { locale: Lang; address: string | null }): { isNew: boolean };
+  getUser(userId: number): PlayerAccount | null;
   saveGame(gameId: Hex, chatId: number, lang: Lang, secret: GameSecret): void;
   updateSecret(gameId: Hex, secret: GameSecret): void;
   markEnded(gameId: Hex, payload: FinalizePayload): void;
@@ -95,6 +101,15 @@ export interface ModerationEntry {
   /** "auto" for automatic suspension, otherwise the operator. */
   by: string;
   at: number;
+}
+
+export interface PlayerAccount {
+  telegramId: number;
+  locale: Lang | null;
+  address: string | null;
+  status: "active";
+  startedAt: number;
+  lastSeen: number | null;
 }
 
 export interface StoredTx extends TxRecord {
@@ -194,6 +209,13 @@ export class SqliteStore implements Store {
     if (!cols.has("mode")) this.db.exec("ALTER TABLE agents ADD COLUMN mode TEXT NOT NULL DEFAULT 'persona'");
     if (!cols.has("endpoint")) this.db.exec("ALTER TABLE agents ADD COLUMN endpoint TEXT");
     if (!cols.has("secret")) this.db.exec("ALTER TABLE agents ADD COLUMN secret BLOB");
+    const userCols = new Set((this.db.prepare("PRAGMA table_info(users)").all() as { name: string }[]).map((c) => c.name));
+    if (!userCols.has("locale")) this.db.exec("ALTER TABLE users ADD COLUMN locale TEXT");
+    if (!userCols.has("address")) this.db.exec("ALTER TABLE users ADD COLUMN address TEXT");
+    if (!userCols.has("status")) this.db.exec("ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
+    if (!userCols.has("last_seen")) this.db.exec("ALTER TABLE users ADD COLUMN last_seen INTEGER");
+    // One wallet per account: derived wallets are unique by construction, the index makes it a rule.
+    this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS users_address ON users (address) WHERE address IS NOT NULL");
     const fgCols = new Set((this.db.prepare("PRAGMA table_info(finished_games)").all() as { name: string }[]).map((c) => c.name));
     if (!fgCols.has("chat_id")) this.db.exec("ALTER TABLE finished_games ADD COLUMN chat_id INTEGER");
   }
@@ -220,6 +242,32 @@ export class SqliteStore implements Store {
 
   startedUsers() {
     return (this.db.prepare("SELECT telegram_id FROM users").all() as { telegram_id: number }[]).map((r) => r.telegram_id);
+  }
+
+  upsertUser(userId: number, u: { locale: Lang; address: string | null }) {
+    const now = Date.now();
+    const existed = this.db.prepare("SELECT 1 FROM users WHERE telegram_id = ?").get(userId) !== undefined;
+    this.db
+      .prepare(
+        `INSERT INTO users (telegram_id, started_at, locale, address, last_seen) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (telegram_id) DO UPDATE SET locale = excluded.locale, address = COALESCE(users.address, excluded.address), last_seen = excluded.last_seen`,
+      )
+      .run(userId, now, u.locale, u.address, now);
+    return { isNew: !existed };
+  }
+
+  getUser(userId: number): PlayerAccount | null {
+    const r = this.db.prepare("SELECT * FROM users WHERE telegram_id = ?").get(userId) as Record<string, string | number | null> | undefined;
+    return r
+      ? {
+          telegramId: Number(r.telegram_id),
+          locale: (r.locale as Lang | null) ?? null,
+          address: (r.address as string | null) ?? null,
+          status: "active",
+          startedAt: Number(r.started_at),
+          lastSeen: r.last_seen == null ? null : Number(r.last_seen),
+        }
+      : null;
   }
 
   addStartedUser(userId: number) {

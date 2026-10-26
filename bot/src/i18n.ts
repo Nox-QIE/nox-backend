@@ -20,8 +20,18 @@ const TEAM: Record<Lang, Record<Team, string>> = {
 export const roleName = (l: Lang, r: Role) => ROLE[l][r];
 export const teamName = (l: Lang, t: Team) => TEAM[l][t];
 
+/** The few public stats shown when a player comes back (from the indexer's D7 mirror). */
+export interface PlayerStatsLite {
+  credits: number;
+  games: number;
+  wins: number;
+  streakDays: number;
+  rank: number;
+}
+
 type Dict = {
   welcome: string;
+  welcomeBack: (s: PlayerStatsLite | null) => string;
   joinBtn: string;
   startBtn: string;
   lobby: (host: string, names: string[], min: number, max: number, secs: number) => string;
@@ -69,6 +79,13 @@ export const T: Record<Lang, Dict> = {
   id: {
     welcome:
       "Selamat datang di <b>Nox</b> 🌙\nGame tebak-tebakan peran di grup, dipandu AI Game Master.\n\n<b>Nox Promise</b>\n• Tidak pernah minta setor uang\n• Tidak ada seed phrase\n• Main gratis\n\nTambahkan bot ke grup lalu ketik /newgame.",
+    welcomeBack: (s) =>
+      s && s.games > 0
+        ? `Selamat datang kembali di <b>Nox</b> 🌙\n${s.games} game, ${s.wins} menang, <b>${s.credits} Nox Credits</b>` +
+          (s.rank ? `, peringkat #${s.rank}` : "") +
+          (s.streakDays > 1 ? `\n🔥 Streak ${s.streakDays} hari, main lagi hari ini supaya tidak putus.` : "") +
+          "\n\nKetik /newgame di grup untuk main lagi."
+        : "Selamat datang kembali di <b>Nox</b> 🌙\nKetik /newgame di grup untuk main.",
     joinBtn: "🙋 Gabung",
     startBtn: "▶️ Mulai",
     lobby: (host, names, min, max, secs) =>
@@ -129,6 +146,13 @@ export const T: Record<Lang, Dict> = {
   en: {
     welcome:
       "Welcome to <b>Nox</b> 🌙\nA social deduction game for your group, hosted by an AI Game Master.\n\n<b>Nox Promise</b>\n• We never ask you to deposit money\n• No seed phrase\n• Free to play\n\nAdd the bot to a group and type /newgame.",
+    welcomeBack: (s) =>
+      s && s.games > 0
+        ? `Welcome back to <b>Nox</b> 🌙\n${s.games} games, ${s.wins} wins, <b>${s.credits} Nox Credits</b>` +
+          (s.rank ? `, rank #${s.rank}` : "") +
+          (s.streakDays > 1 ? `\n🔥 ${s.streakDays}-day streak: play today to keep it.` : "") +
+          "\n\nType /newgame in a group to play again."
+        : "Welcome back to <b>Nox</b> 🌙\nType /newgame in a group to play.",
     joinBtn: "🙋 Join",
     startBtn: "▶️ Start",
     lobby: (host, names, min, max, secs) =>

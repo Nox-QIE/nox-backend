@@ -51,6 +51,8 @@ export interface Config {
   webUrl?: string;
   /** Telegram user id that gets incident alerts by DM (it must have pressed Start). Optional. */
   operatorChatId?: number;
+  /** The indexer's public API (npm run indexer), for player stats in the bot. Optional. */
+  apiUrl?: string;
   /** Webhook mode when set; long polling otherwise. */
   webhook?: { url: string; secret: string; port: number; host: string };
   /** Per-user limit on commands, button taps and private messages. */
@@ -92,6 +94,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     dbPath: env.NOX_DB_PATH || "data/nox.db",
     ...(env.NOX_WEB_URL ? { webUrl: env.NOX_WEB_URL } : {}),
     ...(env.NOX_OPERATOR_CHAT_ID ? { operatorChatId: chatId(env.NOX_OPERATOR_CHAT_ID) } : {}),
+    ...(env.NOX_API_URL ? { apiUrl: env.NOX_API_URL.replace(/\/+$/, "") } : {}),
     ...(env.NOX_WEBHOOK_URL ? { webhook: loadWebhook(env) } : {}),
     rateLimit: parseRateLimit(env.NOX_RATE_LIMIT || "20/10"),
     timings: {
