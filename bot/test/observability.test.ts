@@ -89,10 +89,15 @@ describe("daily ops report (APP-08)", () => {
     const tx = { gameId: ("0x" + "1".repeat(64)) as Hex, step: "castVote", from: "0x01" as Hex, to: "0x02" as Hex, hash: null, gasUsed: 50_000n, feeWei: 56_250_000_000_000n, block: 1n, attempts: 1, error: null };
     store.recordTx({ ...tx, status: "success" });
     store.recordTx({ ...tx, status: "failed", gasUsed: null, feeWei: null, attempts: 3, error: "fetch failed" });
+    const drip = { ...tx, step: "gas drip", status: "success" as const, gasUsed: 21_000n, feeWei: 23_625_000_000_000n };
+    store.recordTx({ ...drip, reason: "onboarding", valueWei: 10n ** 16n });
+    store.recordTx({ ...drip, reason: "top-up", valueWei: 4n * 10n ** 15n });
+    store.upsertUser(7, { locale: "id", address: "0x" + "77".repeat(20) });
     store.practiceStarted();
     store.practiceStarted();
     store.practiceFinished();
     const [d] = opsDays(store, Date.now() - 86_400_000, Date.now() + 1);
-    expect(d).toMatchObject({ games: 2, seats: 12, aiUsd: 0.02, unpriced: 1, templateShare: 1 / 8, gasFeeWei: 56_250_000_000_000n, failedTxs: 1, practiceStarted: 2, practiceFinished: 1 });
+    expect(d).toMatchObject({ games: 2, seats: 12, aiUsd: 0.02, unpriced: 1, templateShare: 1 / 8, failedTxs: 1, practiceStarted: 2, practiceFinished: 1 });
+    expect(d).toMatchObject({ gasFeeWei: 56_250_000_000_000n + 2n * 23_625_000_000_000n, newWallets: 1, dripWei: 14n * 10n ** 15n, onboardingDripWei: 10n ** 16n });
   });
 });

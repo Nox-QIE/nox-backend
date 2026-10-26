@@ -176,10 +176,12 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     }
     expect(mine.filter((t) => t.step === "joinGame").map((t) => t.from).sort()).toEqual(users.map((u) => wallets.address(u)).sort());
     expect(mine.filter((t) => t.step === "gas drip").map((t) => t.to).sort()).toEqual(users.map((u) => wallets.address(u)).sort());
+    // Fresh wallets: every drip is their first gas (onboarding), with the amount sent recorded.
+    for (const t of mine.filter((t) => t.step === "gas drip")) expect(t.reason === "onboarding" && t.valueWei! > 0n).toBe(true);
 
     // Every player sent their own transactions (join + votes/commits), funded by the gas drip.
     for (const u of users) expect(await publicClient.getTransactionCount({ address: wallets.address(u) })).toBeGreaterThan(0);
-    expect(logs.filter((l) => l.event === "gas_drip")).toHaveLength(5);
+    expect(logs.filter((l) => l.event === "gas_drip" && l.reason === "onboarding")).toHaveLength(5);
 
     const revealed = await publicClient.readContract({ address: gameAddress, abi: NoxGameAbi, functionName: "revealedRoleOf", args: [gameId, wallets.address(wolf!)] });
     expect(revealed).toBe(2); // werewolf

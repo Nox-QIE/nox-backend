@@ -84,6 +84,10 @@ export interface Store {
   recordTx(tx: TxRecord): void;
   txsOfGame(gameId: Hex): StoredTx[];
   txsBetween(fromMs: number, toMs: number): StoredTx[];
+  /** A wallet's audit history (F01-D05): created, gas drips with their reason, forgotten. Addresses only. */
+  walletAudit(address: string): WalletAuditEntry[];
+  /** Wallets created per UTC day. */
+  walletsCreated(fromMs: number, toMs: number): { day: string; wallets: number }[];
   recordOperatorBalance(wei: bigint): void;
   /** AI use per finished game (F09-D05). */
   recordGmGame(g: { gameId: Hex | null; agentId: number | null; players: number; report: NarratorReport }): void;
@@ -138,6 +142,13 @@ export interface PlayerAccount {
 }
 
 export interface StoredTx extends TxRecord {
+  at: number;
+}
+
+/** One line of a wallet's history: "created", "gas" (a drip) or "forgotten". */
+export interface WalletAuditEntry {
+  event: string;
+  detail: string | null;
   at: number;
 }
 
@@ -197,10 +208,20 @@ export class SqliteStore implements Store {
         block INTEGER,
         attempts INTEGER NOT NULL,
         error TEXT,
-        at INTEGER NOT NULL
+        at INTEGER NOT NULL,
+        reason TEXT,
+        value_wei TEXT
       );
       CREATE INDEX IF NOT EXISTS chain_txs_game ON chain_txs (game_id);
       CREATE INDEX IF NOT EXISTS chain_txs_at ON chain_txs (at);
+      CREATE TABLE IF NOT EXISTS wallet_audit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        address TEXT NOT NULL,
+        event TEXT NOT NULL,
+        detail TEXT,
+        at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS wallet_audit_address ON wallet_audit (address);
       CREATE TABLE IF NOT EXISTS operator_balances (at INTEGER PRIMARY KEY, wei TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS gm_games (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -257,6 +278,9 @@ export class SqliteStore implements Store {
     const userCols = new Set((this.db.prepare("PRAGMA table_info(users)").all() as { name: string }[]).map((c) => c.name));
     if (!userCols.has("locale")) this.db.exec("ALTER TABLE users ADD COLUMN locale TEXT");
     if (!userCols.has("address")) this.db.exec("ALTER TABLE users ADD COLUMN address TEXT");
+    const txCols = new Set((this.db.prepare("PRAGMA table_info(chain_txs)").all() as { name: string }[]).map((c) => c.name));
+    if (!txCols.has("reason")) this.db.exec("ALTER TABLE chain_txs ADD COLUMN reason TEXT");
+    if (!txCols.has("value_wei")) this.db.exec("ALTER TABLE chain_txs ADD COLUMN value_wei TEXT");
     if (!userCols.has("status")) this.db.exec("ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
     if (!userCols.has("last_seen")) this.db.exec("ALTER TABLE users ADD COLUMN last_seen INTEGER");
     // One wallet per account: derived wallets are unique by construction, the index makes it a rule.
@@ -291,7 +315,11 @@ export class SqliteStore implements Store {
 
   upsertUser(userId: number, u: { locale: Lang; address: string | null }) {
     const now = Date.now();
-    const existed = this.db.prepare("SELECT 1 FROM users WHERE telegram_id = ?").get(userId) !== undefined;
+    const before = this.db.prepare("SELECT address FROM users WHERE telegram_id = ?").get(userId) as { address: string | null } | undefined;
+    const existed = before !== undefined;
+    // Audit (F01-D05): the wallet is created when the account first gets its address. The row holds the
+    // public address only: no Telegram id, and no key material (wallets are derived, ADR-002).
+    if (u.address && !before?.address) this.audit(u.address, "created", "start");
     this.db
       .prepare(
         `INSERT INTO users (telegram_id, started_at, locale, address, last_seen) VALUES (?, ?, ?, ?, ?)
@@ -348,7 +376,38 @@ export class SqliteStore implements Store {
     return Number(this.db.prepare("DELETE FROM games WHERE status IN ('finalized', 'cancelled') AND updated_at < ?").run(beforeMs).changes);
   }
 
+  private audit(address: string, event: string, detail: string | null) {
+    this.db.prepare("INSERT INTO wallet_audit (address, event, detail, at) VALUES (?, ?, ?, ?)").run(address.toLowerCase(), event, detail, Date.now());
+  }
+
+  walletAudit(address: string): WalletAuditEntry[] {
+    const a = address.toLowerCase();
+    const own = (this.db.prepare("SELECT event, detail, at FROM wallet_audit WHERE address = ?").all(a) as { event: string; detail: string | null; at: number }[]).map(
+      (r) => ({ event: r.event, detail: r.detail, at: Number(r.at) }),
+    );
+    // Gas drips live in the tx ledger (D14); show them in the same history.
+    const drips = this.txs("step = 'gas drip' AND lower(to_addr) = ?", a).map((t) => ({
+      event: "gas",
+      detail: `${t.reason ?? "drip"} ${t.valueWei ?? "?"} wei, ${t.status}${t.hash ? ` ${t.hash}` : ""}`,
+      at: t.at,
+    }));
+    // Within one millisecond keep the life-cycle order: created, then gas, then forgotten.
+    const order = (e: string) => ["created", "gas", "forgotten"].indexOf(e);
+    return [...own, ...drips].sort((x, y) => x.at - y.at || order(x.event) - order(y.event));
+  }
+
+  walletsCreated(fromMs: number, toMs: number): { day: string; wallets: number }[] {
+    return (
+      this.db
+        .prepare("SELECT date(at / 1000, 'unixepoch') AS day, COUNT(*) AS n FROM wallet_audit WHERE event = 'created' AND at >= ? AND at < ? GROUP BY day ORDER BY day")
+        .all(fromMs, toMs) as { day: string; n: number }[]
+    ).map((r) => ({ day: r.day, wallets: Number(r.n) }));
+  }
+
   forgetUser(userId: number) {
+    const u = this.db.prepare("SELECT address FROM users WHERE telegram_id = ?").get(userId) as { address: string | null } | undefined;
+    // The wallet and its history stay on chain; the audit keeps that the account behind it was deleted.
+    if (u?.address) this.audit(u.address, "forgotten", "account deleted with /forget");
     this.db.prepare("DELETE FROM users WHERE telegram_id = ?").run(userId);
     // Settlement only needs to know that one host ran several games, not who: keep a stable stand-in.
     this.db.prepare("UPDATE finished_games SET host_id = -abs(host_id) WHERE host_id = ?").run(userId);
@@ -462,7 +521,7 @@ export class SqliteStore implements Store {
   recordTx(tx: TxRecord) {
     this.db
       .prepare(
-        "INSERT INTO chain_txs (game_id, step, from_addr, to_addr, hash, status, gas_used, fee_wei, block, attempts, error, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO chain_txs (game_id, step, from_addr, to_addr, hash, status, gas_used, fee_wei, block, attempts, error, at, reason, value_wei) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         tx.gameId,
@@ -477,6 +536,8 @@ export class SqliteStore implements Store {
         tx.attempts,
         tx.error,
         Date.now(),
+        tx.reason ?? null,
+        tx.valueWei?.toString() ?? null,
       );
   }
 
@@ -495,6 +556,8 @@ export class SqliteStore implements Store {
       attempts: Number(r.attempts),
       error: r.error as string | null,
       at: Number(r.at),
+      reason: (r.reason as string | null) ?? null,
+      valueWei: r.value_wei == null ? null : BigInt(r.value_wei),
     }));
   }
 
