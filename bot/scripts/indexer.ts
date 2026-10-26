@@ -7,11 +7,13 @@
  */
 import { createPublicClient, type Abi } from "viem";
 import { createApi } from "../src/api.js";
+import { installLogRedaction, secretsFrom } from "../src/redact.js";
 import { loadIndexerConfig } from "../src/config.js";
 import { NoxAgentRegistryAbi, NoxCreditsAbi, NoxGameAbi, NoxPaymentsAbi } from "../src/chain/contracts.js";
 import { EventIndexer, EventStore, reconcileCredits, reconcilePayments, type IndexedContract, type IndexerClient } from "../src/chain/indexer.js";
 import { chainFor, rpcTransport } from "../src/chain/viem-ledger.js";
 
+installLogRedaction(secretsFrom(process.env));
 const c = loadIndexerConfig();
 const chain = chainFor(c.network);
 const client = createPublicClient({ chain, transport: rpcTransport(chain, c.rpcUrl) });
