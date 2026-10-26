@@ -81,6 +81,10 @@ export interface Store {
   txsOfGame(gameId: Hex): StoredTx[];
   txsBetween(fromMs: number, toMs: number): StoredTx[];
   recordOperatorBalance(wei: bigint): void;
+  /** Scam Shield practice (F10-D05): daily counts only, never who took it or how they answered. */
+  practiceStarted(): void;
+  practiceFinished(): void;
+  practiceStats(fromDay: string): { day: string; started: number; finished: number }[];
   /** Agent health (F18-S11): one row per finished game narrated by a Marketplace agent. */
   recordAgentGame(agentId: number, report: NarratorReport): void;
   agentGames(agentId: number, limit: number): AgentGame[];
@@ -175,6 +179,7 @@ export class SqliteStore implements Store {
       CREATE INDEX IF NOT EXISTS chain_txs_game ON chain_txs (game_id);
       CREATE INDEX IF NOT EXISTS chain_txs_at ON chain_txs (at);
       CREATE TABLE IF NOT EXISTS operator_balances (at INTEGER PRIMARY KEY, wei TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS practice_stats (day TEXT PRIMARY KEY, started INTEGER NOT NULL DEFAULT 0, finished INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS agent_games (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         agent_id INTEGER NOT NULL,
@@ -439,6 +444,23 @@ export class SqliteStore implements Store {
 
   txsBetween(fromMs: number, toMs: number) {
     return this.txs("at >= ? AND at < ?", fromMs, toMs);
+  }
+
+  private practiceBump(column: "started" | "finished") {
+    const day = new Date().toISOString().slice(0, 10);
+    this.db.prepare(`INSERT INTO practice_stats (day, ${column}) VALUES (?, 1) ON CONFLICT (day) DO UPDATE SET ${column} = ${column} + 1`).run(day);
+  }
+
+  practiceStarted() {
+    this.practiceBump("started");
+  }
+
+  practiceFinished() {
+    this.practiceBump("finished");
+  }
+
+  practiceStats(fromDay: string) {
+    return this.db.prepare("SELECT day, started, finished FROM practice_stats WHERE day >= ? ORDER BY day").all(fromDay) as { day: string; started: number; finished: number }[];
   }
 
   recordOperatorBalance(wei: bigint) {
