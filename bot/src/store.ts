@@ -25,6 +25,15 @@ export interface FinalizePayload extends GameSecret {
   winner: number;
 }
 
+/** A finished Scam Shield game: the scenario (key@version), its size, group and outcome. */
+export interface ScenarioGame {
+  scenario: string;
+  players: number;
+  chatId: number | null;
+  winner: string | null;
+  endedAt: number;
+}
+
 export interface FinishedGame {
   id: number;
   agentId: number | null;
@@ -78,7 +87,10 @@ export interface Store {
   setChainAgentId(id: number, chainAgentId: number): void;
   /** Every finished game (agentId null = Nox's own GM): the input for monthly agent revenue settlement. */
   /** `chatId` (the Telegram group) feeds the Game Night engagement report; it identifies a group, not a person. */
-  recordFinishedGame(g: { agentId: number | null; players: number; hostId: number; chainGameId: Hex | null; chatId?: number }): void;
+  /** `scenario` (Scam Shield key) and `winner` feed the sponsor report (F10-D04). */
+  recordFinishedGame(g: { agentId: number | null; players: number; hostId: number; chainGameId: Hex | null; chatId?: number; scenario?: string | null; winner?: string | null }): void;
+  /** Finished Scam Shield games in [fromMs, toMs): counts only, for sponsors. */
+  scenarioGames(fromMs: number, toMs: number): ScenarioGame[];
   finishedGames(fromMs: number, toMs: number): FinishedGame[];
   finishedGamesOfChat(chatId: number, fromMs: number, toMs: number): FinishedGame[];
   agentUsage(fromMs: number, toMs: number): { agentId: number; games: number; players: number }[];
@@ -328,6 +340,8 @@ export class SqliteStore implements Store {
     this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS users_address ON users (address) WHERE address IS NOT NULL");
     const fgCols = new Set((this.db.prepare("PRAGMA table_info(finished_games)").all() as { name: string }[]).map((c) => c.name));
     if (!fgCols.has("chat_id")) this.db.exec("ALTER TABLE finished_games ADD COLUMN chat_id INTEGER");
+    if (!fgCols.has("scenario")) this.db.exec("ALTER TABLE finished_games ADD COLUMN scenario TEXT");
+    if (!fgCols.has("winner")) this.db.exec("ALTER TABLE finished_games ADD COLUMN winner TEXT");
   }
 
   close() {
@@ -617,10 +631,18 @@ export class SqliteStore implements Store {
     this.db.prepare("UPDATE agents SET chain_agent_id = ? WHERE id = ?").run(chainAgentId, id);
   }
 
-  recordFinishedGame(g: { agentId: number | null; players: number; hostId: number; chainGameId: Hex | null; chatId?: number }) {
+  recordFinishedGame(g: { agentId: number | null; players: number; hostId: number; chainGameId: Hex | null; chatId?: number; scenario?: string | null; winner?: string | null }) {
     this.db
-      .prepare("INSERT INTO finished_games (agent_id, players, host_id, chain_game_id, ended_at, chat_id) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(g.agentId, g.players, g.hostId, g.chainGameId, Date.now(), g.chatId ?? null);
+      .prepare("INSERT INTO finished_games (agent_id, players, host_id, chain_game_id, ended_at, chat_id, scenario, winner) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(g.agentId, g.players, g.hostId, g.chainGameId, Date.now(), g.chatId ?? null, g.scenario ?? null, g.winner ?? null);
+  }
+
+  scenarioGames(fromMs: number, toMs: number): ScenarioGame[] {
+    return (
+      this.db
+        .prepare("SELECT scenario, players, chat_id, winner, ended_at FROM finished_games WHERE scenario IS NOT NULL AND ended_at >= ? AND ended_at < ? ORDER BY id")
+        .all(fromMs, toMs) as { scenario: string; players: number; chat_id: number | null; winner: string | null; ended_at: number }[]
+    ).map((r) => ({ scenario: r.scenario, players: Number(r.players), chatId: r.chat_id == null ? null : Number(r.chat_id), winner: r.winner, endedAt: Number(r.ended_at) }));
   }
 
   finishedGamesOfChat(chatId: number, fromMs: number, toMs: number): FinishedGame[] {

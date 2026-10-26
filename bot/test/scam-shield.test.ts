@@ -3,6 +3,7 @@ import { checkPersona } from "../src/agents.js";
 import { TemplateNarrator } from "../src/narrator.js";
 import { Registry } from "../src/registry.js";
 import { scenarioFrom, TASK_SCAM } from "../src/scenarios.js";
+import { SqliteStore } from "../src/store.js";
 import { THEME_AGENTS } from "../src/themes.js";
 import { FakeMessenger, FakeScheduler } from "./fakes.js";
 
@@ -29,6 +30,7 @@ describe("a Scam Shield game", () => {
   it("re-skins roles and facts, posts a warning sign each morning, ends with a debrief and Scam Spotter badges", async () => {
     const messenger = new FakeMessenger();
     const scheduler = new FakeScheduler();
+    const store = new SqliteStore(":memory:");
     const registry = new Registry({
       messenger,
       scheduler,
@@ -37,6 +39,7 @@ describe("a Scam Shield game", () => {
       botUsername: "nox_test_bot",
       narratorFor: (lang, _persona, wording) => new TemplateNarrator(lang, wording),
       agents: () => THEME_AGENTS,
+      store,
     });
     const users = [11, 22, 33, 44, 55];
     users.forEach((u) => registry.markStarted(u));
@@ -68,5 +71,7 @@ describe("a Scam Shield game", () => {
     expect(group.at(-1)).toContain("Kartu Scam Shield");
     for (const u of users.filter((u) => u !== wolf)) expect(messenger.dms(u).at(-1)!.html).toContain("Scam Spotter");
     expect(messenger.dms(wolf).some((d) => d.html.includes("Scam Spotter"))).toBe(false);
+    // Counted for sponsor reports (F10-D04): scenario and outcome, never who.
+    expect(store.scenarioGames(0, Date.now() + 1)).toEqual([{ scenario: "task-scam@1", players: 5, chatId: -1, winner: "village", endedAt: expect.any(Number) }]);
   });
 });

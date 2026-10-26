@@ -516,6 +516,13 @@ export class EventStore {
     };
   }
 
+  /** How many times a badge (by its name, e.g. SCAM_SPOTTER) was awarded on chain in [fromTs, toTs). */
+  badgesAwarded(badgeId: Hex, fromTs: number, toTs: number): number {
+    return Number(
+      this.rows("SELECT COUNT(*) AS n FROM chain_events WHERE event = 'BadgeAwarded' AND lower(json_extract(args, '$.badgeId')) = ? AND ts >= ? AND ts < ?", badgeId.toLowerCase(), fromTs, toTs)[0]?.n ?? 0,
+    );
+  }
+
   /** Distinct player wallets that signed a game transaction, per UTC day, for days since `fromTs`. */
   dailySigners(fromTs: number): { day: string; players: number }[] {
     return this.rows(

@@ -470,7 +470,16 @@ export class GameRoom {
     const roster = this.state!.seats.map((id) => ({ name: this.name(id), role: ended.roles[id]! }));
     // Nox themes (negative ids) are not Marketplace agents: they count as Nox's own GM for revenue.
     const agentId = this.agentId !== null && this.agentId > 0 ? this.agentId : null;
-    this.deps.store?.recordFinishedGame({ agentId, players: this.players.size, hostId: this.hostId, chainGameId: this.gameId, chatId: this.chatId });
+    this.deps.store?.recordFinishedGame({
+      agentId,
+      players: this.players.size,
+      hostId: this.hostId,
+      chainGameId: this.gameId,
+      chatId: this.chatId,
+      // Scam Shield games are counted (never named) in sponsor reports (F10-D04).
+      scenario: this.scenario ? `${this.scenario.key}@${this.scenario.version}` : null,
+      winner: ended.winner,
+    });
     let over = await this.narrator.gameOver(ended.winner, roster);
     if (this.gameId && this.deps.webUrl) over += `\n\n${this.t.verifyLink(`${this.deps.webUrl.replace(/\/+$/, "")}/game/?id=${this.gameId}`)}`;
     await this.deps.messenger.sendGroup(this.chatId, over);
