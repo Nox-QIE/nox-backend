@@ -15,6 +15,7 @@ Commands:
 | `/pass` | host, private chat | – | shows Host Pass status (read on chain) |
 | `/latihan`, `/practice` | anyone, private chat | – | Scam Shield practice quiz |
 | `/privacy`, `/privasi` | anyone | – | privacy notice |
+| `/web`, `/masuk` | player, private chat | – | a one-time web sign-in link for the player's game wallet: `<NOX_WEB_URL>/login/#t=<token>`. It lives 10 minutes and works once; the token sits in the URL fragment, so it never reaches a server log (NOX-APP-14) |
 | `/negara`, `/country` | player, private chat | two-letter country code, e.g. `/negara ID` | sets the account's country, used only to pick the payment rail (Indonesia: rupiah invoice; elsewhere: QIE/QUSDC on chain). The first guess comes from the Telegram language |
 | `/forget`, `/lupakan` | player | confirmed with the `f:yes` button | deletes the account (right to erasure) |
 
@@ -120,6 +121,12 @@ See [agent-terms.md](agent-terms.md), section 3, for the full table. In short:
 ## Public read API (out to E1, E3 and anyone)
 
 `GET /v1/health`, `/v1/stats`, `/v1/leaderboard`, `/v1/daily`, `/v1/engagement`, `/v1/games`, `/v1/games/<id>`, `/v1/players/<address>`, `/v1/agents/revenue`. These are GET/HEAD only, with CORS `*` and an ETag equal to the indexed block. They return JSON: public chain data and aggregates only. Every field is defined in [metrics.md](metrics.md).
+
+With `NOX_LOGIN_SECRET` set, two more routes exist for web sign-in (NOX-APP-14). Neither is cached (`no-store`).
+- `POST /v1/login`: body `{"token": "<login token from /web>"}`. Answers `{address, session, expiresAt}` (a 7-day session token), or `401` if the token is expired, forged or already used. Used nonces are kept in the index DB (`used_logins`) until they expire.
+- `GET /v1/me`: needs `Authorization: Bearer <session>`. Answers `{address, expiresAt, stats}`.
+
+Tokens are `base64url(JSON {k, a, e, n?}).base64url(HMAC-SHA256)` with the secret shared by the bot and the API. They hold only the game wallet address, never a Telegram id.
 
 ## E3 B2B client
 

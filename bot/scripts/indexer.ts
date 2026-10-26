@@ -55,7 +55,7 @@ if (process.argv.includes("--once")) {
   if (c.reconcileMinutes !== null) await reconcile();
   store.close();
 } else {
-  const api = c.api ? createApi({ store, network: c.network, chainId: chain.id, trustProxy: c.api.trustProxy, ratePerMinute: c.api.ratePerMinute, log }) : null;
+  const api = c.api ? createApi({ store, network: c.network, chainId: chain.id, trustProxy: c.api.trustProxy, ratePerMinute: c.api.ratePerMinute, loginSecret: c.api.loginSecret, log }) : null;
   api?.on("error", (err) => {
     log({ event: "api_error", error: err.message });
     process.exit(1);

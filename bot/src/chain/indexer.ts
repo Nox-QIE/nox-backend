@@ -95,6 +95,7 @@ export class EventStore {
         checked INTEGER NOT NULL,
         mismatches TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS used_logins (nonce TEXT PRIMARY KEY, expires INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS reconciliations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         at INTEGER NOT NULL,
@@ -398,6 +399,12 @@ export class EventStore {
   }
 
   /** Highest block the index has fully scanned (0 before the first sync). */
+  /** Spend a web login token's nonce (NOX-APP-14): true the first time, false ever after. */
+  useLoginNonce(nonce: string, expires: number, nowS: number): boolean {
+    this.db.prepare("DELETE FROM used_logins WHERE expires <= ?").run(nowS);
+    return Number(this.db.prepare("INSERT OR IGNORE INTO used_logins (nonce, expires) VALUES (?, ?)").run(nonce, expires).changes) > 0;
+  }
+
   indexedBlock(): number {
     return Number(this.rows("SELECT COALESCE(MAX(block), 0) AS n FROM chain_checkpoints")[0]?.n ?? 0);
   }
