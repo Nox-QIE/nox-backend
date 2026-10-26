@@ -87,6 +87,10 @@ export interface ViemLedgerOptions {
   retryDelayMs?: number;
   /** Called once a game is finalized, cancelled or disputed on-chain (to mark it settled in the store). */
   onSettled?: (gameId: Hex, outcome: "finalized" | "cancelled" | "disputed") => void;
+  /** Every transaction the ledger sent or gave up on, for the gas & transaction ledger (D14). */
+  onTx?: (tx: TxRecord) => void;
+  /** The operator's balance, read after gas drips and finalizes (at most once a minute). */
+  onOperatorBalance?: (wei: bigint) => void;
   /** Each player's credits as minted at finalize (from RewardGranted), with their daily streak. */
   onRewards?: (gameId: Hex, rewards: PlayerReward[]) => void;
   /** A game ended as Disputed: the reveal failed verification, or someone claimed the reveal timeout. */
@@ -140,28 +144,56 @@ export class GameQueue {
 }
 
 /**
- * Gas floors per NoxGame function: the most each used in the contract tests (12 players for
- * revealAndFinalize: about 1.65M with the ADR-005 credits formula), plus margin. On 26 Oct 2026 a QIE testnet RPC answered eth_estimateGas with
- * 22088 for createGame (the cost of calling an address with no code, as if a lagging node lacked
- * the contract); the transaction ran out of gas. Never send less than these.
+ * Gas limits on QIE (measured 26 Oct 2026). Two quirks of its Cosmos EVM:
+ * - eth_estimateGas runs low: createGame is estimated at 50,474 on every testnet RPC but uses 70,758
+ *   (one RPC even answered 22,088, intrinsic gas only, and that transaction ran out of gas);
+ * - a transaction is charged at least half its gas limit (revealAndFinalize with a 2.4M limit was
+ *   charged exactly 1.2M).
+ * So the limit is twice the estimate, which costs nothing while the estimate is at or below the real
+ * use, and never less than a fallback sized from the contract tests. Each fallback is under twice its
+ * function's real use, so it never makes a transaction pay more than it uses.
  */
-export const GAS_FLOOR: Record<string, bigint> = {
+export const GAS_FALLBACK: Record<string, bigint> = {
   createGame: 110_000n,
   joinGame: 150_000n,
   commitRoles: 90_000n,
   commitNightAction: 90_000n,
   castVote: 90_000n,
   recordRound: 90_000n,
-  revealAndFinalize: 2_400_000n,
   cancelGame: 60_000n,
   reportDispute: 60_000n,
 };
 
-/** Gas limit to send: the node's estimate plus 25%, but never below the function's floor. */
-export function gasLimitFor(functionName: string, estimate: bigint): bigint {
-  const floor = GAS_FLOOR[functionName] ?? 100_000n;
-  const padded = (estimate * 125n) / 100n;
-  return padded > floor ? padded : floor;
+/**
+ * Fallback for revealAndFinalize, by size. Contract tests with first-time players: 5 players and
+ * 3 night reveals use about 571k, 12 and 25 about 1.65M; this gives about 1.25x of each.
+ */
+export const finalizeFallback = (players: number, nights: number) => 60_000n + 125_000n * BigInt(players) + 18_000n * BigInt(nights);
+
+/** Gas limit to send for `functionName`, given the node's estimate and the call's args (for sizing). */
+export function gasLimitFor(functionName: string, estimate: bigint, args: readonly unknown[] = []): bigint {
+  const len = (i: number) => (Array.isArray(args[i]) ? (args[i] as unknown[]).length : 12);
+  const fallback = functionName === "revealAndFinalize" ? finalizeFallback(len(1), len(2)) : (GAS_FALLBACK[functionName] ?? 150_000n);
+  const doubled = estimate * 2n;
+  return doubled > fallback ? doubled : fallback;
+}
+
+
+export interface TxRecord {
+  gameId: Hex | null;
+  /** NoxGame function name, or "gas drip". */
+  step: string;
+  from: Address;
+  /** Contract called, or the player who got the drip. */
+  to: Address;
+  /** null when a retry found the earlier try had landed without knowing its hash. */
+  hash: Hex | null;
+  status: "success" | "reverted" | "failed";
+  gasUsed: bigint | null;
+  feeWei: bigint | null;
+  block: bigint | null;
+  attempts: number;
+  error: string | null;
 }
 
 export interface PlayerReward {
@@ -176,8 +208,17 @@ export interface PlayerReward {
   streakDays: number;
 }
 
+type TxContext = Pick<TxRecord, "gameId" | "step" | "from" | "to">;
+
 /** A mined transaction that reverted: final, retrying would only burn gas again. */
-class TxRevertedError extends Error {}
+class TxRevertedError extends Error {
+  constructor(
+    message: string,
+    readonly receipt: { gasUsed: bigint; effectiveGasPrice: bigint; blockNumber: bigint },
+  ) {
+    super(message);
+  }
+}
 /** A gas drip refused by the daily caps: final until tomorrow. */
 class DripRefusedError extends Error {}
 
@@ -259,6 +300,7 @@ export class ViemLedger implements GameLedger {
   private dripDay = "";
   private readonly drippedToday = new Map<Address, bigint>();
   private drippedTotalToday = 0n;
+  private balanceCheckedAt = 0;
 
   constructor(private readonly o: ViemLedgerOptions) {
     this.transport = o.transport ?? rpcTransport(o.chain, o.rpcUrl);
@@ -339,6 +381,7 @@ export class ViemLedger implements GameLedger {
       }
       this.settle(gameId, "finalized");
       if (hash && this.o.onRewards) await this.reportRewards(gameId, hash, roles.map((x) => x.userId));
+      await this.checkOperatorBalance();
     });
   }
 
@@ -411,13 +454,33 @@ export class ViemLedger implements GameLedger {
     const wallet = createWalletClient({ account, chain: this.o.chain, transport: this.transport });
     const call = { account, address: this.o.gameAddress, abi: NoxGameAbi, functionName: functionName as never, args: args as never };
     const { request } = await this.publicClient.simulateContract(call);
-    const gas = gasLimitFor(functionName, await this.publicClient.estimateContractGas(call));
+    const gas = gasLimitFor(functionName, await this.publicClient.estimateContractGas(call), args);
     return wallet.writeContract({ ...(request as object), gas, ...(nonce !== undefined ? { nonce } : {}) } as never);
   }
 
   private async confirm(hash: Hex, what: string) {
     const receipt = await this.publicClient.waitForTransactionReceipt({ hash, timeout: 60_000 });
-    if (receipt.status !== "success") throw new TxRevertedError(`${what} reverted (${hash})`);
+    if (receipt.status !== "success") throw new TxRevertedError(`${what} reverted (${hash})`, receipt);
+    return receipt;
+  }
+
+  private record(ctx: TxContext, tx: Omit<TxRecord, keyof TxContext>) {
+    try {
+      this.o.onTx?.({ ...ctx, ...tx });
+    } catch (e) {
+      this.o.log?.({ event: "tx_record_error", error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  /** Report the operator's balance (for the treasury alert), at most once a minute. */
+  private async checkOperatorBalance() {
+    if (!this.o.onOperatorBalance || Date.now() - this.balanceCheckedAt < 60_000) return;
+    this.balanceCheckedAt = Date.now();
+    try {
+      this.o.onOperatorBalance(await this.publicClient.getBalance({ address: this.operator.address }));
+    } catch (e) {
+      this.o.log?.({ event: "balance_read_error", error: e instanceof Error ? e.message.split("\n")[0] : String(e) });
+    }
   }
 
   /**
@@ -426,8 +489,14 @@ export class ViemLedger implements GameLedger {
    * wrongly). Once a hash exists, only its receipt is awaited again, never a second copy. A mined
    * revert is final. On a retry, `done` tells whether the earlier attempt landed after all.
    */
-  private async withRetry(what: string, send: () => Promise<Hex>, done: (err: unknown) => Promise<boolean> | boolean): Promise<Hex | null> {
+  private async withRetry(
+    ctx: TxContext,
+    send: () => Promise<Hex>,
+    done: (err: unknown) => Promise<boolean> | boolean,
+  ): Promise<Hex | null> {
+    const what = ctx.step;
     const max = this.o.maxAttempts ?? 3;
+    const none = { gasUsed: null, feeWei: null, block: null };
     let hash: Hex | undefined;
     let last: unknown;
     for (let attempt = 1; ; attempt++) {
@@ -435,20 +504,31 @@ export class ViemLedger implements GameLedger {
         // Nothing to wait for from the last try: make sure it did not land before sending again.
         if (attempt > 1 && !hash && (await done(last))) {
           this.o.log?.({ event: "chain_retry_done", what, attempt });
+          this.record(ctx, { hash: null, status: "success", ...none, attempts: attempt, error: "an earlier try landed" });
           return null;
         }
         hash ??= await send();
-        await this.confirm(hash, what);
+        const r = await this.confirm(hash, what);
+        this.record(ctx, { hash, status: "success", gasUsed: r.gasUsed, feeWei: r.gasUsed * r.effectiveGasPrice, block: r.blockNumber, attempts: attempt, error: null });
         return hash;
       } catch (e) {
-        if (e instanceof TxRevertedError || e instanceof DripRefusedError) throw e;
-        // A reveal that does not match, or a game already disputed, will not change on a retry.
-        if (REVEAL_MISMATCH.has(revertOf(e)?.errorName ?? "") || isDisputedOnChain(e)) throw e;
-        if (attempt > 1 && !hash && (await done(e))) {
+        const message = e instanceof Error ? e.message.split("\n")[0]! : String(e);
+        if (e instanceof TxRevertedError) {
+          const r = e.receipt;
+          this.record(ctx, { hash: hash ?? null, status: "reverted", gasUsed: r.gasUsed, feeWei: r.gasUsed * r.effectiveGasPrice, block: r.blockNumber, attempts: attempt, error: message });
+          throw e;
+        }
+        if (e instanceof DripRefusedError) throw e;
+        const final = REVEAL_MISMATCH.has(revertOf(e)?.errorName ?? "") || isDisputedOnChain(e);
+        if (!final && attempt > 1 && !hash && (await done(e))) {
           this.o.log?.({ event: "chain_retry_done", what, attempt });
+          this.record(ctx, { hash: null, status: "success", ...none, attempts: attempt, error: "an earlier try landed" });
           return null;
         }
-        if (attempt >= max) throw e;
+        if (final || attempt >= max) {
+          this.record(ctx, { hash: hash ?? null, status: "failed", ...none, attempts: attempt, error: message });
+          throw e;
+        }
         last = e;
         this.o.log?.({ event: "chain_retry", what, attempt, error: e instanceof Error ? e.message.split("\n")[0] : String(e) });
         await new Promise((r) => setTimeout(r, (this.o.retryDelayMs ?? 1500) * attempt));
@@ -476,7 +556,7 @@ export class ViemLedger implements GameLedger {
 
   private async asOperator(functionName: string, args: readonly unknown[]) {
     return this.withRetry(
-      functionName,
+      { gameId: args[0] as Hex, step: functionName, from: this.operator.address, to: this.o.gameAddress },
       () => this.operatorSend((nonce) => this.submit(this.operator, functionName, args, nonce)),
       (e) => alreadyDone(functionName, e),
     );
@@ -487,9 +567,9 @@ export class ViemLedger implements GameLedger {
     let q = this.playerQueues.get(account.address);
     if (!q) this.playerQueues.set(account.address, (q = new SerialQueue()));
     return q.run(async () => {
-      await this.drip(account.address);
+      await this.drip(account.address, args[0] as Hex);
       return this.withRetry(
-        functionName,
+        { gameId: args[0] as Hex, step: functionName, from: account.address, to: this.o.gameAddress },
         () => this.submit(account, functionName, args),
         (e) => alreadyDone(functionName, e),
       );
@@ -516,7 +596,7 @@ export class ViemLedger implements GameLedger {
     this.drippedTotalToday = total;
   }
 
-  private async drip(to: Address) {
+  private async drip(to: Address, gameId: Hex) {
     const balance = await this.publicClient.getBalance({ address: to });
     if (balance >= this.o.minBalance) return;
     this.reserveDrip(to, this.o.dripAmount - balance);
@@ -524,10 +604,11 @@ export class ViemLedger implements GameLedger {
     const value = this.o.dripAmount - balance;
     // A drip that was sent but whose response got lost shows up as a topped-up balance: never send twice.
     const hash = await this.withRetry(
-      "gas drip",
+      { gameId, step: "gas drip", from: this.operator.address, to },
       () => this.operatorSend((nonce) => wallet.sendTransaction({ to, value, nonce, chain: this.o.chain })),
       async () => (await this.publicClient.getBalance({ address: to })) >= this.o.minBalance,
     );
     this.o.log?.({ event: "gas_drip", to, wei: value.toString(), hash });
+    await this.checkOperatorBalance();
   }
 }

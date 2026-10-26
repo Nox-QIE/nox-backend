@@ -3,7 +3,8 @@ import { randomInt } from "node:crypto";
 import type { Hex } from "viem";
 import { langFrom, T } from "./i18n.js";
 import { noLedger, type GameLedger } from "./chain/ledger.js";
-import { chainFor, ViemLedger, type PlayerReward } from "./chain/viem-ledger.js";
+import { chainFor, ViemLedger, type PlayerReward, type ViemLedgerOptions } from "./chain/viem-ledger.js";
+import { qie, TreasuryWatch } from "./treasury.js";
 import { PlayerWallets } from "./chain/wallets.js";
 import type { ChainConfig, Config, GmConfig } from "./config.js";
 import { recoverGames } from "./recovery.js";
@@ -95,13 +96,10 @@ export function buildGmPool(gm: GmConfig): GmModelPool {
 
 const logLine = (l: Record<string, unknown>) => console.log(JSON.stringify(l));
 
-export function buildLedger(
-  c: ChainConfig,
-  log = logLine,
-  store?: Store,
-  onDisputed?: (gameId: Hex, reason: string, detail: string) => void,
-  onRewards?: (gameId: Hex, rewards: PlayerReward[]) => void,
-): GameLedger {
+/** Callbacks the bot hangs on the ledger (store updates, alerts, DMs). */
+export type LedgerHooks = Partial<Pick<ViemLedgerOptions, "onSettled" | "onDisputed" | "onRewards" | "onTx" | "onOperatorBalance">>;
+
+export function buildLedger(c: ChainConfig, log = logLine, hooks: LedgerHooks = {}): GameLedger {
   if (c.network === "off") return noLedger;
   return new ViemLedger({
     chain: chainFor(c.network),
@@ -114,10 +112,43 @@ export function buildLedger(
     dripDailyCapPerPlayer: c.dailyPerPlayerWei,
     dripDailyBudget: c.dailyBudgetWei,
     log,
-    ...(store ? { onSettled: (gameId, outcome) => store.setStatus(gameId, outcome) } : {}),
-    ...(onDisputed ? { onDisputed } : {}),
-    ...(onRewards ? { onRewards } : {}),
+    ...hooks,
   });
+}
+
+/** Hooks that keep the store in step and alert people: settlement, disputes, rewards, D14, treasury. */
+export function botLedgerHooks(a: {
+  store: Store;
+  messenger: Messenger;
+  treasuryAlertWei: bigint;
+  webUrl?: string;
+  operatorChatId?: number;
+  log?: (l: Record<string, unknown>) => void;
+}): LedgerHooks {
+  const log = a.log ?? logLine;
+  const fail = (event: string, gameId?: Hex) => (e: unknown) => log({ event, ...(gameId ? { gameId } : {}), error: e instanceof Error ? e.message : String(e) });
+  const watch = new TreasuryWatch({
+    alertWei: a.treasuryAlertWei,
+    snapshot: (wei) => a.store.recordOperatorBalance(wei),
+    alert: (wei) => {
+      log({ event: "treasury_low", wei: wei.toString() });
+      if (a.operatorChatId) {
+        void a.messenger
+          .sendDM(a.operatorChatId, `⚠️ <b>Nox operator wallet is low</b>\nBalance: ${qie(wei)} QIE (alert below ${qie(a.treasuryAlertWei)} QIE). Gas drips and game transactions stop when it runs out.`)
+          .catch(fail("treasury_alert_error"));
+      }
+    },
+  });
+  return {
+    onSettled: (gameId, outcome) => a.store.setStatus(gameId, outcome),
+    onDisputed: (gameId, reason, detail) =>
+      void alertDispute({ messenger: a.messenger, store: a.store, gameId, reason, detail, ...(a.webUrl ? { webUrl: a.webUrl } : {}), ...(a.operatorChatId ? { operatorChatId: a.operatorChatId } : {}) }).catch(
+        fail("dispute_alert_error", gameId),
+      ),
+    onRewards: (gameId, rewards) => void sendRewardDms({ messenger: a.messenger, store: a.store, gameId, rewards }).catch(fail("reward_dm_error", gameId)),
+    onTx: (tx) => a.store.recordTx(tx),
+    onOperatorBalance: (wei) => watch.observe(wei),
+  };
 }
 
 /**
@@ -156,14 +187,10 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, t
   await bot.init();
   const messenger = telegramMessenger(bot);
   const store = new SqliteStore(dbPath, chain.walletSecret ? storeKey(chain.walletSecret) : null);
-  const ledger = buildLedger(chain, logLine, store, (gameId, reason, detail) =>
-    void alertDispute({ messenger, store, gameId, reason, detail, ...(webUrl ? { webUrl } : {}), ...(operatorChatId ? { operatorChatId } : {}) }).catch((e) =>
-      logLine({ event: "dispute_alert_error", gameId, error: e instanceof Error ? e.message : String(e) }),
-    ),
-    (gameId, rewards) =>
-      void sendRewardDms({ messenger, store, gameId, rewards }).catch((e) =>
-        logLine({ event: "reward_dm_error", gameId, error: e instanceof Error ? e.message : String(e) }),
-      ),
+  const ledger = buildLedger(
+    chain,
+    logLine,
+    botLedgerHooks({ store, messenger, treasuryAlertWei: chain.treasuryAlertWei, ...(webUrl ? { webUrl } : {}), ...(operatorChatId ? { operatorChatId } : {}) }),
   );
   const registry = new Registry({
     messenger,

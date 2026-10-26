@@ -11,7 +11,8 @@
     "dev:bot": "npm run dev -w @nox/bot",
     "dev:chain": "node --import tsx bot/scripts/dev-chain.ts",
     "sim:game": "node --env-file=.env --import tsx bot/scripts/sim-game.ts",
-    "indexer": "node --env-file=.env --import tsx bot/scripts/indexer.ts"
+    "indexer": "node --env-file=.env --import tsx bot/scripts/indexer.ts",
+    "gas:report": "node --env-file=.env --import tsx bot/scripts/gas-report.ts"
   },
   "devDependencies": {
     "typescript": "5.9",

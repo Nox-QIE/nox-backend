@@ -15,7 +15,7 @@ import {
 import { EventIndexer, EventStore, type IndexerClient } from "../src/chain/indexer.js";
 import { operatorFrom, registerAgentOnChain } from "../src/chain/operator.js";
 import { settleMonth } from "../src/chain/settle.js";
-import { gasLimitFor, rpcTransport, ViemLedger, type PlayerReward } from "../src/chain/viem-ledger.js";
+import { gasLimitFor, rpcTransport, ViemLedger, type PlayerReward, type TxRecord } from "../src/chain/viem-ledger.js";
 import { PlayerWallets } from "../src/chain/wallets.js";
 import { TemplateNarrator } from "../src/narrator.js";
 import type { GameLedger } from "../src/chain/ledger.js";
@@ -81,6 +81,7 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
   it("records a full game: roles committed, actions and votes from player wallets, reveal verified, credits minted", async () => {
     const logs: Record<string, unknown>[] = [];
     const rewards: PlayerReward[] = [];
+    const txs: TxRecord[] = [];
     const wallets = new PlayerWallets(Uint8Array.from({ length: 32 }, (_, i) => i + 1));
     const ledger = new ViemLedger({
       chain,
@@ -93,6 +94,7 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
       pollingMs: 50,
       log: (l) => logs.push(l),
       onRewards: (_id, r) => rewards.push(...r),
+      onTx: (t) => txs.push(t),
     });
     const messenger = new FakeMessenger();
     const scheduler = new FakeScheduler();
@@ -149,6 +151,23 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     expect(rewards.find((r) => r.userId === seer)).toEqual({ userId: seer, base: 30, role: 5, vote: 2, streak: 0, total: 37, streakDays: 1 });
     expect(rewards.find((r) => r.userId === wolf)).toMatchObject({ base: 10, role: 0, vote: 0, total: 10 });
     expect(rewards).toHaveLength(5);
+
+    // Gas & transaction ledger (D14): every step of this game, each with its hash, gas and fee.
+    const mine = txs.filter((t) => t.gameId === gameId);
+    const count = (step: string) => mine.filter((t) => t.step === step).length;
+    expect(count("createGame")).toBe(1);
+    expect(count("joinGame")).toBe(5);
+    expect(count("commitRoles")).toBe(1);
+    expect(count("commitNightAction")).toBe(3);
+    expect(count("revealAndFinalize")).toBe(1);
+    expect(count("gas drip")).toBe(5);
+    for (const t of mine) {
+      expect(t).toMatchObject({ status: "success", attempts: 1, error: null });
+      expect(t.hash).toMatch(/^0x[0-9a-f]{64}$/);
+      expect(t.gasUsed! > 0n && t.feeWei! > 0n).toBe(true);
+    }
+    expect(mine.filter((t) => t.step === "joinGame").map((t) => t.from).sort()).toEqual(users.map((u) => wallets.address(u)).sort());
+    expect(mine.filter((t) => t.step === "gas drip").map((t) => t.to).sort()).toEqual(users.map((u) => wallets.address(u)).sort());
 
     // Every player sent their own transactions (join + votes/commits), funded by the gas drip.
     for (const u of users) expect(await publicClient.getTransactionCount({ address: wallets.address(u) })).toBeGreaterThan(0);
@@ -286,7 +305,7 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     const store = new SqliteStore(":memory:");
     const owner = "0x00000000000000000000000000000000000a9e01" as const;
     const agentId = store.addAgent(owner, { name: "Noir", tagline: "", style: "x".repeat(50), examples: [], langs: ["en"] });
-    const op = operatorFrom({ network: "local", rpcUrl: RPC, operatorKey: OPERATOR_KEY, dripWei: 0n, minWei: 0n, dailyPerPlayerWei: 0n, dailyBudgetWei: 0n, paymentsFromBlock: 0n }, 50);
+    const op = operatorFrom({ network: "local", rpcUrl: RPC, operatorKey: OPERATOR_KEY, dripWei: 0n, minWei: 0n, dailyPerPlayerWei: 0n, dailyBudgetWei: 0n, treasuryAlertWei: 0n, paymentsFromBlock: 0n }, 50);
     store.setChainAgentId(agentId, await registerAgentOnChain(op, registry, owner, store.getAgent(agentId)!.persona));
     for (const a of [agentId, agentId, agentId, null]) store.recordFinishedGame({ agentId: a, players: 6, hostId: 1, chainGameId: null });
 
@@ -332,9 +351,12 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     await ledger.idle();
     expect(logs.filter((l) => l.event === "chain_error")).toEqual([]);
     expect(await ledger.statusOf(gameId)).toBe(2); // Running: create, 5 joins and commitRoles all landed
-    expect(gasLimitFor("createGame", 22088n)).toBe(110_000n);
-    expect(gasLimitFor("revealAndFinalize", 1_500_000n)).toBe(2_400_000n); // floor
-    expect(gasLimitFor("revealAndFinalize", 2_000_000n)).toBe(2_500_000n); // estimate + 25%
+    expect(gasLimitFor("createGame", 22088n)).toBe(110_000n); // broken estimate: fallback
+    expect(gasLimitFor("createGame", 70_000n)).toBe(140_000n); // twice the estimate: free on QIE while estimate ≤ use
+    // Finalize falls back to a size-based limit; the 12-player one covers the 1.65M measured in the contract tests.
+    expect(gasLimitFor("revealAndFinalize", 300_000n, ["0x", new Array(5), new Array(3)])).toBe(60_000n + 625_000n + 54_000n);
+    expect(gasLimitFor("revealAndFinalize", 400_000n, ["0x", new Array(12), new Array(25)])).toBeGreaterThan(1_650_000n);
+    expect(gasLimitFor("revealAndFinalize", 1_000_000n, ["0x", new Array(5), new Array(3)])).toBe(2_000_000n);
   }, 60_000);
 
   it("retries through a flaky node without creating twice or dripping twice", async () => {
@@ -399,10 +421,12 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
       { retryCount: 0 },
     );
     const logs: Record<string, unknown>[] = [];
+    const txs: TxRecord[] = [];
     const ledger = new ViemLedger({
       chain,
       gameAddress,
       operatorKey: OPERATOR_KEY,
+      onTx: (t) => txs.push(t),
       wallets: new PlayerWallets(Uint8Array.from({ length: 32 }, (_, i) => 230 + i)),
       minBalance: 10n ** 15n,
       dripAmount: 10n ** 16n,
@@ -415,6 +439,10 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     await ledger.idle();
     expect(logs.filter((l) => l.event === "chain_retry" && l.what === "createGame")).toHaveLength(2);
     expect(logs.filter((l) => l.event === "chain_error").map((l) => l.step)).toEqual(["start", "cancel"]);
+    expect(txs.map((t) => [t.step, t.status, t.attempts, t.hash])).toEqual([
+      ["createGame", "failed", 3, null],
+      ["cancelGame", "failed", 3, null],
+    ]);
   }, 60_000);
 
   /** A running 5-player game straight through the ledger, with its role reveals. */
