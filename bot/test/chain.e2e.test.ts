@@ -1,8 +1,10 @@
 import { execSync, spawn, type ChildProcess } from "node:child_process";
-import { createPublicClient, createWalletClient, custom, defineChain, http, type Abi, type Address, type Hex } from "viem";
+import { createPublicClient, createWalletClient, custom, defineChain, http, keccak256, toHex, type Abi, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  NoxBadgesAbi,
+  NoxBadgesBytecode,
   NoxAgentRegistryAbi,
   NoxAgentRegistryBytecode,
   NoxCreditsAbi,
@@ -22,6 +24,7 @@ import { TemplateNarrator } from "../src/narrator.js";
 import type { GameLedger } from "../src/chain/ledger.js";
 import { recoverGames } from "../src/recovery.js";
 import { Registry } from "../src/registry.js";
+import { TASK_SCAM } from "../src/scenarios.js";
 import { SqliteStore, storeKey } from "../src/store.js";
 import { FakeMessenger, FakeScheduler } from "./fakes.js";
 
@@ -371,6 +374,50 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     expect(s.active).toBe(true);
     expect(await publicClient.getBalance({ address: gameWallet })).toBe(0n);
     expect(await passes.offer()).toEqual({ wei: 10n ** 18n, periodDays: 30 });
+  }, 60_000);
+
+  it("awards Scam Spotter on chain after a Scam Shield game the village won, and only then", async () => {
+    const operator = privateKeyToAccount(OPERATOR_KEY);
+    const wallet = createWalletClient({ account: operator, chain, transport: http(RPC) });
+    const badges = (await publicClient.waitForTransactionReceipt({ hash: await wallet.deployContract({ abi: NoxBadgesAbi as never, bytecode: NoxBadgesBytecode, args: [operator.address, operator.address] as never }) })).contractAddress!;
+    const SPOTTER = keccak256(toHex("SCAM_SPOTTER"));
+    await publicClient.waitForTransactionReceipt({ hash: await wallet.writeContract({ address: badges, abi: NoxBadgesAbi, functionName: "defineBadge", args: [SPOTTER, "Scam Spotter", true] }) });
+
+    const logs: Record<string, unknown>[] = [];
+    const wallets = new PlayerWallets(Uint8Array.from({ length: 32 }, (_, i) => 99 + i));
+    const ledger = new ViemLedger({ chain, rpcUrl: RPC, gameAddress, operatorKey: OPERATOR_KEY, wallets, minBalance: 10n ** 15n, dripAmount: 10n ** 16n, pollingMs: 50, badgesAddress: badges, log: (l) => logs.push(l) });
+    const scheduler = new FakeScheduler();
+    const registry = new Registry({ messenger: new FakeMessenger(), scheduler, timings: { lobbyMs: 1000, nightMs: 1000, discussionMs: 1000, voteMs: 1000 }, randomInt: () => 0, botUsername: "b", narratorFor: (lang) => new TemplateNarrator(lang), ledger });
+    const users = [1101, 1102, 1103, 1104, 1105];
+    for (const u of users) registry.startedUsers.add(u);
+    await registry.create(-55, 1101, "Ava", "id", { scenario: TASK_SCAM });
+    const room = registry.roomOfChat(-55)!;
+    for (const u of users.slice(1)) await registry.join(room.id, u, `P${u}`);
+    await room.start(1101);
+    const role = (r: string) => users.filter((u) => room.roleOf(u) === r);
+    const [wolf] = role("werewolf");
+    await room.nightAction(wolf!, 1, String(role("villager")[0]));
+    await room.nightAction(role("seer")[0]!, 1, String(wolf));
+    await room.nightAction(role("doctor")[0]!, 1, String(role("doctor")[0]));
+    await scheduler.advance(1000);
+    for (const u of users.filter((u) => room.isAlive(u))) await room.vote(u, 1, String(wolf));
+    await ledger.idle();
+    expect(logs.filter((l) => l.event === "chain_error" || l.event === "badge_error")).toEqual([]);
+    expect(logs).toContainEqual(expect.objectContaining({ event: "badge_awarded", badge: "SCAM_SPOTTER", players: 4 }));
+    const count = (u: number) => publicClient.readContract({ address: badges, abi: NoxBadgesAbi, functionName: "countOf", args: [wallets.address(u), SPOTTER] });
+    for (const u of users) expect(await count(u)).toBe(u === wolf ? 0 : 1);
+
+    // A game that never finalized gets no badge.
+    ledger.awardBadge(("0x" + "ab".repeat(32)) as Hex, "SCAM_SPOTTER", [1102]);
+    await ledger.idle();
+    expect(logs).toContainEqual(expect.objectContaining({ event: "badge_skipped", reason: "game not finalized" }));
+    expect(await count(1102)).toBe(1);
+
+    // The player record (D7) shows it.
+    const index = new EventStore(":memory:");
+    await new EventIndexer({ client: indexClient, store: index, contracts: [{ name: "NoxBadges", address: badges, abi: NoxBadgesAbi as Abi }], fromBlock: 0n, confirmations: 0n }).syncOnce();
+    expect(index.playerStats(wallets.address(1102))?.badges).toEqual({ "Scam Spotter": 1 });
+    expect(gasLimitFor("award", 20_000n, [SPOTTER, room.gameId, [1, 2, 3, 4]])).toBe(60_000n + 4n * 55_000n);
   }, 60_000);
 
   it("does not trust a node that underestimates gas (QIE testnet answered 22088 for createGame)", async () => {

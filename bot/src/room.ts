@@ -449,6 +449,10 @@ export class GameRoom {
       const payload = { roles: this.roleReveals(), nights: this.nights, resultHash: resultHash(this.log), winner: TEAM_CODE[ended.winner] };
       this.deps.store?.markEnded(this.gameId, payload);
       this.ledger.finalize(this.gameId, payload.roles, payload.nights, payload.resultHash, payload.winner);
+      // Scam Shield won by the group: the Scam Spotter badge on chain too (F10-S05), after finalize lands.
+      if (this.sc && ended.winner === "village") {
+        this.ledger.awardBadge?.(this.gameId, "SCAM_SPOTTER", this.assignments.filter((a) => a.role !== "werewolf").map((a) => Number(a.id)));
+      }
     }
     const roster = this.state!.seats.map((id) => ({ name: this.name(id), role: ended.roles[id]! }));
     // Nox themes (negative ids) are not Marketplace agents: they count as Nox's own GM for revenue.

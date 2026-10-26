@@ -13,9 +13,12 @@ import {
   type Hex,
   type PublicClient,
   parseEventLogs,
+  keccak256,
+  toHex,
+  type Abi,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { NoxGameAbi } from "./contracts.js";
+import { NoxBadgesAbi, NoxGameAbi } from "./contracts.js";
 import type { GameLedger, LedgerNightReveal, LedgerRoleReveal } from "./ledger.js";
 import type { PlayerWallets } from "./wallets.js";
 
@@ -81,6 +84,8 @@ export interface ViemLedgerOptions {
   pollingMs?: number;
   /** Replaces the RPC transport (tests use it to simulate a misbehaving node). */
   transport?: Transport;
+  /** NoxBadges, for achievement badges after finalized games (optional). */
+  badgesAddress?: Address;
   /** Tries per transaction before the game is cancelled. Default 3. */
   maxAttempts?: number;
   /** Wait before retry n is n × this (ms). Default 1500. */
@@ -173,7 +178,12 @@ export const finalizeFallback = (players: number, nights: number) => 60_000n + 1
 /** Gas limit to send for `functionName`, given the node's estimate and the call's args (for sizing). */
 export function gasLimitFor(functionName: string, estimate: bigint, args: readonly unknown[] = []): bigint {
   const len = (i: number) => (Array.isArray(args[i]) ? (args[i] as unknown[]).length : 12);
-  const fallback = functionName === "revealAndFinalize" ? finalizeFallback(len(1), len(2)) : (GAS_FALLBACK[functionName] ?? 150_000n);
+  const fallback =
+    functionName === "revealAndFinalize"
+      ? finalizeFallback(len(1), len(2))
+      : functionName === "award"
+        ? 60_000n + 55_000n * BigInt(len(2)) // NoxBadges.award: about 50k per new player in the contract tests
+        : (GAS_FALLBACK[functionName] ?? 150_000n);
   const doubled = estimate * 2n;
   return doubled > fallback ? doubled : fallback;
 }
@@ -301,6 +311,8 @@ export class ViemLedger implements GameLedger {
   private readonly drippedToday = new Map<Address, bigint>();
   private drippedTotalToday = 0n;
   private balanceCheckedAt = 0;
+  /** Games whose finalize landed (badges are only awarded for those, never for disputed ones). */
+  private readonly finalized = new Set<Hex>();
 
   constructor(private readonly o: ViemLedgerOptions) {
     this.transport = o.transport ?? rpcTransport(o.chain, o.rpcUrl);
@@ -417,7 +429,20 @@ export class ViemLedger implements GameLedger {
     });
   }
 
+  awardBadge(gameId: Hex, badge: "SCAM_SPOTTER", userIds: number[]) {
+    const badges = this.o.badgesAddress;
+    if (!badges || !userIds.length) return;
+    // Queued after finalize on the same game queue, so it runs once the outcome is known.
+    this.enqueue(gameId, "awardBadge", async () => {
+      if (!this.finalized.has(gameId)) return this.o.log?.({ event: "badge_skipped", gameId, badge, reason: "game not finalized" });
+      const accounts = userIds.map((u) => this.addressOf(u));
+      const hash = await this.asOperator("award", [keccak256(toHex(badge)), gameId, accounts], { address: badges, abi: NoxBadgesAbi as Abi });
+      this.o.log?.({ event: "badge_awarded", gameId, badge, players: accounts.length, hash });
+    });
+  }
+
   private settle(gameId: Hex, outcome: "finalized" | "cancelled" | "disputed", reason?: "reveal_mismatch" | "reveal_timeout", detail = "") {
+    if (outcome === "finalized") this.finalized.add(gameId);
     this.gameQueues.delete(gameId);
     this.o.onSettled?.(gameId, outcome);
     if (outcome === "disputed" && reason) {
@@ -438,6 +463,8 @@ export class ViemLedger implements GameLedger {
         try {
           await job();
         } catch (e) {
+          // A badge is a bonus: its failure is logged and never touches the finalized game.
+          if (step === "awardBadge") return this.o.log?.({ event: "badge_error", gameId, error: e instanceof Error ? e.message.split("\n")[0] : String(e) });
           const first = !this.failed.has(gameId);
           this.failed.add(gameId);
           this.o.log?.({ event: "chain_error", gameId, step, error: e instanceof Error ? e.message.split("\n")[0] : String(e) });
@@ -450,9 +477,9 @@ export class ViemLedger implements GameLedger {
   }
 
   /** Simulate (so a revert surfaces with its custom error instead of burning gas), then submit. */
-  private async submit(account: Account, functionName: string, args: readonly unknown[], nonce?: number): Promise<Hex> {
+  private async submit(account: Account, functionName: string, args: readonly unknown[], nonce?: number, target?: { address: Address; abi: Abi }): Promise<Hex> {
     const wallet = createWalletClient({ account, chain: this.o.chain, transport: this.transport });
-    const call = { account, address: this.o.gameAddress, abi: NoxGameAbi, functionName: functionName as never, args: args as never };
+    const call = { account, address: target?.address ?? this.o.gameAddress, abi: (target?.abi ?? NoxGameAbi) as Abi, functionName: functionName as never, args: args as never };
     const { request } = await this.publicClient.simulateContract(call);
     const gas = gasLimitFor(functionName, await this.publicClient.estimateContractGas(call), args);
     return wallet.writeContract({ ...(request as object), gas, ...(nonce !== undefined ? { nonce } : {}) } as never);
@@ -554,10 +581,12 @@ export class ViemLedger implements GameLedger {
     });
   }
 
-  private async asOperator(functionName: string, args: readonly unknown[]) {
+  private async asOperator(functionName: string, args: readonly unknown[], target?: { address: Address; abi: Abi }) {
+    // NoxGame calls take the game id first; NoxBadges.award takes it second.
+    const gameId = (target ? args[1] : args[0]) as Hex;
     return this.withRetry(
-      { gameId: args[0] as Hex, step: functionName, from: this.operator.address, to: this.o.gameAddress },
-      () => this.operatorSend((nonce) => this.submit(this.operator, functionName, args, nonce)),
+      { gameId, step: functionName, from: this.operator.address, to: target?.address ?? this.o.gameAddress },
+      () => this.operatorSend((nonce) => this.submit(this.operator, functionName, args, nonce, target)),
       (e) => alreadyDone(functionName, e),
     );
   }

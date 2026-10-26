@@ -29,6 +29,8 @@ export interface ChainConfig {
   /** Agent Marketplace contracts (needed by the operator scripts for registration and settlement). */
   agentRegistryAddress?: `0x${string}`;
   paymentsAddress?: `0x${string}`;
+  /** NoxBadges (achievement badges), optional. */
+  badgesAddress?: `0x${string}`;
   /** First block to scan for payment events. */
   paymentsFromBlock: bigint;
   operatorKey?: `0x${string}`;
@@ -199,7 +201,7 @@ export function loadChainConfig(env: NodeJS.ProcessEnv = process.env): ChainConf
     treasuryAlertWei: qieToWei(env.NOX_TREASURY_ALERT || "0.5", "NOX_TREASURY_ALERT"),
     paymentsFromBlock: BigInt(env.NOX_PAYMENTS_FROM_BLOCK || 0),
   };
-  for (const [key, field] of [["NOX_AGENT_REGISTRY_ADDRESS", "agentRegistryAddress"], ["NOX_PAYMENTS_ADDRESS", "paymentsAddress"]] as const) {
+  for (const [key, field] of [["NOX_AGENT_REGISTRY_ADDRESS", "agentRegistryAddress"], ["NOX_PAYMENTS_ADDRESS", "paymentsAddress"], ["NOX_BADGES_ADDRESS", "badgesAddress"]] as const) {
     const v = env[key];
     if (!v) continue;
     if (!/^0x[0-9a-fA-F]{40}$/.test(v)) throw new Error(`${key} must be a contract address`);
@@ -227,6 +229,8 @@ export interface IndexerConfig {
   gameAddress: `0x${string}`;
   agentRegistryAddress?: `0x${string}`;
   paymentsAddress?: `0x${string}`;
+  /** NoxBadges (achievement badges), optional. */
+  badgesAddress?: `0x${string}`;
   /** Deploy block: where the first scan starts. */
   fromBlock: bigint;
   confirmations: bigint;
@@ -273,8 +277,10 @@ export function loadIndexerConfig(env: NodeJS.ProcessEnv = process.env): Indexer
   }
   const registry = address("NOX_AGENT_REGISTRY_ADDRESS");
   const payments = address("NOX_PAYMENTS_ADDRESS");
+  const badges = address("NOX_BADGES_ADDRESS");
   if (registry) c.agentRegistryAddress = registry;
   if (payments) c.paymentsAddress = payments;
+  if (badges) c.badgesAddress = badges;
   if (env.NOX_RPC_URL) c.rpcUrl = env.NOX_RPC_URL;
   else if (network === "local") c.rpcUrl = "http://127.0.0.1:8545";
   return c;

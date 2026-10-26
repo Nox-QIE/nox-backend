@@ -129,6 +129,7 @@ export function buildLedger(c: ChainConfig, log = logLine, hooks: LedgerHooks = 
     dripAmount: c.dripWei,
     dripDailyCapPerPlayer: c.dailyPerPlayerWei,
     dripDailyBudget: c.dailyBudgetWei,
+    ...(c.badgesAddress ? { badgesAddress: c.badgesAddress } : {}),
     log,
     ...hooks,
   });

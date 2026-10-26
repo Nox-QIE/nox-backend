@@ -9,7 +9,7 @@ import { createPublicClient, type Abi } from "viem";
 import { createApi } from "../src/api.js";
 import { installLogRedaction, secretsFrom } from "../src/redact.js";
 import { loadIndexerConfig } from "../src/config.js";
-import { NoxAgentRegistryAbi, NoxCreditsAbi, NoxGameAbi, NoxPaymentsAbi } from "../src/chain/contracts.js";
+import { NoxAgentRegistryAbi, NoxBadgesAbi, NoxCreditsAbi, NoxGameAbi, NoxPaymentsAbi } from "../src/chain/contracts.js";
 import { EventIndexer, EventStore, reconcileCredits, reconcilePayments, type IndexedContract, type IndexerClient } from "../src/chain/indexer.js";
 import { chainFor, rpcTransport } from "../src/chain/viem-ledger.js";
 
@@ -26,6 +26,7 @@ const contracts: IndexedContract[] = [
 ];
 if (c.agentRegistryAddress) contracts.push({ name: "NoxAgentRegistry", address: c.agentRegistryAddress, abi: NoxAgentRegistryAbi as Abi });
 if (c.paymentsAddress) contracts.push({ name: "NoxPayments", address: c.paymentsAddress, abi: NoxPaymentsAbi as Abi });
+if (c.badgesAddress) contracts.push({ name: "NoxBadges", address: c.badgesAddress, abi: NoxBadgesAbi as Abi });
 
 const store = new EventStore(c.dbPath);
 const indexer = new EventIndexer({ client: client as unknown as IndexerClient, store, contracts, fromBlock: c.fromBlock, confirmations: c.confirmations, log });
