@@ -41,11 +41,13 @@ export class PassReader {
     return status;
   }
 
-  /** Price per period in native QIE (wei) and the period length, or null when not for sale. */
-  async offer(passType = HOST_PASS): Promise<{ wei: bigint; periodDays: number } | null> {
-    const zero = "0x0000000000000000000000000000000000000000";
+  /**
+   * Price per period and the period length, or null when not for sale in that token. `token` is the
+   * zero address for native QIE (price in wei) or an ERC-20 such as QUSDC (price in its own units).
+   */
+  async offer(passType = HOST_PASS, token: Address = "0x0000000000000000000000000000000000000000"): Promise<{ wei: bigint; periodDays: number } | null> {
     const [wei, period] = await Promise.all([
-      this.o.client.readContract({ address: this.o.payments, abi: NoxPaymentsAbi, functionName: "priceOf", args: [passType, zero] }),
+      this.o.client.readContract({ address: this.o.payments, abi: NoxPaymentsAbi, functionName: "priceOf", args: [passType, token] }),
       this.o.client.readContract({ address: this.o.payments, abi: NoxPaymentsAbi, functionName: "periodOf", args: [passType] }),
     ]);
     return (wei as bigint) > 0n ? { wei: wei as bigint, periodDays: Math.round(Number(period) / 86_400) } : null;

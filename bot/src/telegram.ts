@@ -1,10 +1,10 @@
 import { Bot, GrammyError, InlineKeyboard } from "grammy";
 import { randomInt } from "node:crypto";
-import { createPublicClient, type Hex } from "viem";
+import { createPublicClient, formatUnits, type Address, type Hex } from "viem";
 import { esc, langFrom, T, type Lang, type PlayerStatsLite } from "./i18n.js";
 import { noLedger, type GameLedger } from "./chain/ledger.js";
 import { chainFor, rpcTransport, ViemLedger, type PlayerReward, type ViemLedgerOptions } from "./chain/viem-ledger.js";
-import { PassReader, type PassClient } from "./chain/passes.js";
+import { HOST_PASS, PassReader, type PassClient } from "./chain/passes.js";
 import { countryGuess, parseCountry, payRail, type PayRail } from "./pay-rail.js";
 import { LOGIN_TTL_S, loginLink, loginToken } from "./login.js";
 import { GameNights } from "./gamenight.js";
@@ -271,12 +271,18 @@ export async function passReply(a: {
   /** The account's payment rail (F14-D04) and who sells rupiah passes. */
   rail?: PayRail;
   contact?: string;
+  /** QUSDC (6 decimals), offered next to QIE when NoxPayments has a QUSDC price (F14-S04). */
+  qusdc?: Address;
 }): Promise<string> {
   const t = T[a.lang];
   const wallet = a.ledger.addressOf(a.userId);
   if (!wallet || !a.passes || !a.payments) return t.passStatus({ wallet: wallet ?? "-", active: false, until: null, price: null, periodDays: null, payments: "", explorer: "" });
-  const [status, offer] = await Promise.all([a.passes.status(wallet), a.passes.offer()]);
-  const text = t.passStatus({
+  const [status, offer, usd] = await Promise.all([
+    a.passes.status(wallet),
+    a.passes.offer(),
+    a.qusdc ? a.passes.offer(HOST_PASS, a.qusdc).catch(() => null) : Promise.resolve(null),
+  ]);
+  let text = t.passStatus({
     wallet,
     active: status.active,
     until: status.active ? new Date(status.expiresAt * 1000).toISOString().slice(0, 10) : null,
@@ -285,6 +291,7 @@ export async function passReply(a: {
     payments: a.payments,
     explorer: `${a.explorer ?? ""}/address/${a.payments}`,
   });
+  if (usd && a.qusdc) text += `\n\n${t.passQusdc({ wallet, price: formatUnits(usd.wei, 6), token: a.qusdc, payments: a.payments })}`;
   // Rupiah rail: the invoice comes first; paying on chain from a wallet stays possible.
   return a.rail === "rupiah" && offer ? `${text}\n\n${t.passRupiah(wallet, a.contact ?? null)}` : text;
 }
@@ -363,6 +370,7 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
       userId: ctx.from.id,
       lang,
       rail: payRail(country),
+      ...(chain.qusdcAddress ? { qusdc: chain.qusdcAddress } : {}),
       ...(paymentContact ? { contact: paymentContact } : {}),
     }).catch(() => T[lang].stale);
     await ctx.reply(text, { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
