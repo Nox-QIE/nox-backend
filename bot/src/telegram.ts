@@ -3,7 +3,7 @@ import { randomInt } from "node:crypto";
 import type { Hex } from "viem";
 import { langFrom, T } from "./i18n.js";
 import { noLedger, type GameLedger } from "./chain/ledger.js";
-import { chainFor, ViemLedger } from "./chain/viem-ledger.js";
+import { chainFor, ViemLedger, type PlayerReward } from "./chain/viem-ledger.js";
 import { PlayerWallets } from "./chain/wallets.js";
 import type { ChainConfig, Config, GmConfig } from "./config.js";
 import { recoverGames } from "./recovery.js";
@@ -95,7 +95,13 @@ export function buildGmPool(gm: GmConfig): GmModelPool {
 
 const logLine = (l: Record<string, unknown>) => console.log(JSON.stringify(l));
 
-export function buildLedger(c: ChainConfig, log = logLine, store?: Store, onDisputed?: (gameId: Hex, reason: string, detail: string) => void): GameLedger {
+export function buildLedger(
+  c: ChainConfig,
+  log = logLine,
+  store?: Store,
+  onDisputed?: (gameId: Hex, reason: string, detail: string) => void,
+  onRewards?: (gameId: Hex, rewards: PlayerReward[]) => void,
+): GameLedger {
   if (c.network === "off") return noLedger;
   return new ViemLedger({
     chain: chainFor(c.network),
@@ -110,6 +116,7 @@ export function buildLedger(c: ChainConfig, log = logLine, store?: Store, onDisp
     log,
     ...(store ? { onSettled: (gameId, outcome) => store.setStatus(gameId, outcome) } : {}),
     ...(onDisputed ? { onDisputed } : {}),
+    ...(onRewards ? { onRewards } : {}),
   });
 }
 
@@ -137,6 +144,12 @@ export async function alertDispute(a: {
   }
 }
 
+/** F08-S08: after finalize, DM each player their credits breakdown in the game's language. */
+export async function sendRewardDms(a: { messenger: Messenger; store: Store; gameId: Hex; rewards: PlayerReward[] }) {
+  const lang = a.store.gameInfo(a.gameId)?.lang ?? "en";
+  for (const r of a.rewards) await a.messenger.sendDM(r.userId, T[lang].rewardDm(r));
+}
+
 /** Wire Telegram updates to the registry. Nox stays a regular bot: no Mini App / Web App buttons. */
 export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, timings, gm, chain }: Config) {
   const bot = new Bot(botToken);
@@ -147,6 +160,10 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, t
     void alertDispute({ messenger, store, gameId, reason, detail, ...(webUrl ? { webUrl } : {}), ...(operatorChatId ? { operatorChatId } : {}) }).catch((e) =>
       logLine({ event: "dispute_alert_error", gameId, error: e instanceof Error ? e.message : String(e) }),
     ),
+    (gameId, rewards) =>
+      void sendRewardDms({ messenger, store, gameId, rewards }).catch((e) =>
+        logLine({ event: "reward_dm_error", gameId, error: e instanceof Error ? e.message : String(e) }),
+      ),
   );
   const registry = new Registry({
     messenger,

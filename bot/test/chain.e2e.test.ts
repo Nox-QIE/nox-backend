@@ -15,7 +15,7 @@ import {
 import { EventIndexer, EventStore, type IndexerClient } from "../src/chain/indexer.js";
 import { operatorFrom, registerAgentOnChain } from "../src/chain/operator.js";
 import { settleMonth } from "../src/chain/settle.js";
-import { gasLimitFor, rpcTransport, ViemLedger } from "../src/chain/viem-ledger.js";
+import { gasLimitFor, rpcTransport, ViemLedger, type PlayerReward } from "../src/chain/viem-ledger.js";
 import { PlayerWallets } from "../src/chain/wallets.js";
 import { TemplateNarrator } from "../src/narrator.js";
 import type { GameLedger } from "../src/chain/ledger.js";
@@ -80,6 +80,7 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
 
   it("records a full game: roles committed, actions and votes from player wallets, reveal verified, credits minted", async () => {
     const logs: Record<string, unknown>[] = [];
+    const rewards: PlayerReward[] = [];
     const wallets = new PlayerWallets(Uint8Array.from({ length: 32 }, (_, i) => i + 1));
     const ledger = new ViemLedger({
       chain,
@@ -91,6 +92,7 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
       dripAmount: 10n ** 16n,
       pollingMs: 50,
       log: (l) => logs.push(l),
+      onRewards: (_id, r) => rewards.push(...r),
     });
     const messenger = new FakeMessenger();
     const scheduler = new FakeScheduler();
@@ -143,6 +145,10 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     expect(await balance(doctor!)).toBe(32n); // protected itself, not the wolf's pick: vote only
     expect(await balance(victim)).toBe(30n); // killed at night, never voted
     for (const u of role("villager").filter((u) => u !== victim)) expect(await balance(u)).toBe(32n);
+    // The breakdown read back from RewardGranted (sent to each player by DM).
+    expect(rewards.find((r) => r.userId === seer)).toEqual({ userId: seer, base: 30, role: 5, vote: 2, streak: 0, total: 37, streakDays: 1 });
+    expect(rewards.find((r) => r.userId === wolf)).toMatchObject({ base: 10, role: 0, vote: 0, total: 10 });
+    expect(rewards).toHaveLength(5);
 
     // Every player sent their own transactions (join + votes/commits), funded by the gas drip.
     for (const u of users) expect(await publicClient.getTransactionCount({ address: wallets.address(u) })).toBeGreaterThan(0);

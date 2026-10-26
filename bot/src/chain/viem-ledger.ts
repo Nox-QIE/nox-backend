@@ -12,6 +12,7 @@ import {
   type Chain,
   type Hex,
   type PublicClient,
+  parseEventLogs,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { NoxGameAbi } from "./contracts.js";
@@ -86,6 +87,8 @@ export interface ViemLedgerOptions {
   retryDelayMs?: number;
   /** Called once a game is finalized, cancelled or disputed on-chain (to mark it settled in the store). */
   onSettled?: (gameId: Hex, outcome: "finalized" | "cancelled" | "disputed") => void;
+  /** Each player's credits as minted at finalize (from RewardGranted), with their daily streak. */
+  onRewards?: (gameId: Hex, rewards: PlayerReward[]) => void;
   /** A game ended as Disputed: the reveal failed verification, or someone claimed the reveal timeout. */
   onDisputed?: (gameId: Hex, reason: "reveal_mismatch" | "reveal_timeout", detail: string) => void;
   log?: (line: Record<string, unknown>) => void;
@@ -103,23 +106,35 @@ class SerialQueue {
 
 /**
  * One game's on-chain steps. Ordered steps (create, commitRoles, recordRound, finalize, cancel) are
- * barriers: they wait for everything before them. Player actions between two barriers (the votes of
- * a day, the night commitments) come from different wallets and run in parallel, so a full table
- * lands in one or two blocks instead of one block per player.
+ * barriers: they wait for everything before them. Player actions of one kind (the night commitments,
+ * the votes of a day) come from different wallets and run in parallel, so a full table lands in one
+ * or two blocks instead of one block per player. A switch to another kind (night → day) waits for
+ * the previous kind, so no vote lands on chain before a night commitment of the same round.
  */
-class GameQueue {
+export class GameQueue {
   private barrier: Promise<unknown> = Promise.resolve();
   private parallel: Promise<unknown>[] = [];
+  private group: string | null = null;
 
-  run(job: () => Promise<void>, parallel: boolean): Promise<void> {
-    if (parallel) {
+  /** `group` = the kind of a parallel player action, or null for an ordered step. */
+  run(job: () => Promise<void>, group: string | null): Promise<void> {
+    if (group !== null && group === this.group) {
       const p = this.barrier.then(job);
       this.parallel.push(p.catch(() => undefined));
       return p;
     }
-    const p = Promise.allSettled([this.barrier, ...this.parallel]).then(job);
-    this.barrier = p.catch(() => undefined);
+    const before = Promise.allSettled([this.barrier, ...this.parallel]);
     this.parallel = [];
+    this.group = group;
+    if (group !== null) {
+      // First action of a new kind: it and the rest of its kind wait for everything before.
+      this.barrier = before;
+      const p = before.then(job);
+      this.parallel.push(p.catch(() => undefined));
+      return p;
+    }
+    const p = before.then(job);
+    this.barrier = p.catch(() => undefined);
     return p;
   }
 }
@@ -147,6 +162,18 @@ export function gasLimitFor(functionName: string, estimate: bigint): bigint {
   const floor = GAS_FLOOR[functionName] ?? 100_000n;
   const padded = (estimate * 125n) / 100n;
   return padded > floor ? padded : floor;
+}
+
+export interface PlayerReward {
+  userId: number;
+  /** participation (+ win) */
+  base: number;
+  role: number;
+  vote: number;
+  streak: number;
+  total: number;
+  /** Consecutive UTC days with a finalized game, including today. */
+  streakDays: number;
 }
 
 /** A mined transaction that reverted: final, retrying would only burn gas again. */
@@ -297,8 +324,9 @@ export class ViemLedger implements GameLedger {
         target: this.addressOf(x.targetUserId),
         nonce: x.nonce,
       }));
+      let hash: Hex | null;
       try {
-        await this.asOperator("revealAndFinalize", [gameId, r, n, resultHash, winner]);
+        hash = await this.asOperator("revealAndFinalize", [gameId, r, n, resultHash, winner]);
       } catch (e) {
         const revert = revertOf(e);
         if (revert && REVEAL_MISMATCH.has(revert.errorName)) {
@@ -310,7 +338,28 @@ export class ViemLedger implements GameLedger {
         throw e;
       }
       this.settle(gameId, "finalized");
+      if (hash && this.o.onRewards) await this.reportRewards(gameId, hash, roles.map((x) => x.userId));
     });
+  }
+
+  /** Read the RewardGranted breakdown from the finalize receipt. Failing here never affects the game. */
+  private async reportRewards(gameId: Hex, hash: Hex, userIds: number[]) {
+    try {
+      const receipt = await this.publicClient.getTransactionReceipt({ hash });
+      const byAddress = new Map(userIds.map((u) => [this.addressOf(u).toLowerCase(), u]));
+      const grants = parseEventLogs({ abi: NoxGameAbi, eventName: "RewardGranted", logs: receipt.logs });
+      const rewards: PlayerReward[] = [];
+      for (const g of grants) {
+        const userId = byAddress.get(g.args.player.toLowerCase());
+        if (userId === undefined) continue;
+        const [, days] = await this.publicClient.readContract({ address: this.o.gameAddress, abi: NoxGameAbi, functionName: "streakOf", args: [g.args.player] });
+        const { base, roleBonus, voteBonus, streakBonus } = g.args;
+        rewards.push({ userId, base, role: roleBonus, vote: voteBonus, streak: streakBonus, total: base + roleBonus + voteBonus + streakBonus, streakDays: days });
+      }
+      this.o.onRewards?.(gameId, rewards);
+    } catch (e) {
+      this.o.log?.({ event: "rewards_read_error", gameId, error: e instanceof Error ? e.message.split("\n")[0] : String(e) });
+    }
   }
 
   cancel(gameId: Hex, reason: string) {
@@ -352,7 +401,7 @@ export class ViemLedger implements GameLedger {
           // A failed finalize keeps its record for the boot-time retry; any other failure cancels the game.
           if (first && step !== "finalize" && step !== "cancel") this.cancel(gameId, `chain error at ${step}`);
         }
-      }, PARALLEL_STEPS.has(step))
+      }, PARALLEL_STEPS.has(step) ? step : null)
       .finally(() => this.pending.delete(p));
     this.pending.add(p);
   }

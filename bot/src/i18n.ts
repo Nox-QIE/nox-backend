@@ -49,6 +49,7 @@ type Dict = {
   gmDefault: string;
   gmPicked: (name: string) => string;
   verifyLink: (url: string) => string;
+  rewardDm: (r: { base: number; role: number; vote: number; streak: number; total: number; streakDays: number }) => string;
   pickKill: string;
   pickInspect: string;
   pickProtect: string;
@@ -90,6 +91,17 @@ export const T: Record<Lang, Dict> = {
       `⚠️ Hasil game ini ditahan. Pemeriksaan akhir di blockchain QIE tidak lolos, jadi game dicatat terbuka sebagai <b>sengketa</b> dan tidak ada yang mendapat credits. Tim Nox sudah diberi tahu dan sedang memeriksanya.` +
       (url ? `\nCatatan publik: ${url}` : ""),
     verifyLink: (url) => `🔍 Cek sendiri bahwa game ini adil (peran & aksi dibuka dan dihitung ulang di browsermu): <a href="${url}">${url}</a>`,
+    rewardDm: (r) =>
+      [
+        `🏅 Kamu dapat <b>${r.total} Nox Credits</b> dari game ini.`,
+        `• Ikut main & hasil tim: ${r.base}`,
+        r.role ? `• Peran dimainkan dengan baik: +${r.role}` : "",
+        r.vote ? `• Vote tepat ke werewolf: +${r.vote}` : "",
+        r.streak ? `• Streak harian (${r.streakDays} hari berturut-turut): +${r.streak}` : r.streakDays > 1 ? `• Streak: ${r.streakDays} hari berturut-turut` : "",
+        "Credits adalah poin status: tidak bisa dipindah atau diuangkan, dan dicatat di blockchain QIE.",
+      ]
+        .filter(Boolean)
+        .join("\n"),
     gmLine: (n) => `🎙 Game Master: ${n}. Host bisa memilih lewat tombol di bawah.`,
     gmDefault: "🌙 Nox (bawaan)",
     gmPicked: (n) => `Game Master: ${n}`,
@@ -138,6 +150,17 @@ export const T: Record<Lang, Dict> = {
       `⚠️ The result of this game is on hold. The final check on the QIE blockchain did not pass, so it was recorded publicly as <b>disputed</b> and nobody received credits. The Nox team has been alerted and is looking into it.` +
       (url ? `\nPublic record: ${url}` : ""),
     verifyLink: (url) => `🔍 Check for yourself that this game was fair (roles and actions revealed and recomputed in your browser): <a href="${url}">${url}</a>`,
+    rewardDm: (r) =>
+      [
+        `🏅 You earned <b>${r.total} Nox Credits</b> in this game.`,
+        `• Playing & team result: ${r.base}`,
+        r.role ? `• Role played well: +${r.role}` : "",
+        r.vote ? `• Votes that hit a werewolf: +${r.vote}` : "",
+        r.streak ? `• Daily streak (${r.streakDays} days in a row): +${r.streak}` : r.streakDays > 1 ? `• Streak: ${r.streakDays} days in a row` : "",
+        "Credits are status points: they cannot be transferred or cashed out, and they are recorded on the QIE blockchain.",
+      ]
+        .filter(Boolean)
+        .join("\n"),
     gmLine: (n) => `🎙 Game Master: ${n}. The host can switch with the buttons below.`,
     gmDefault: "🌙 Nox (default)",
     gmPicked: (n) => `Game Master: ${n}`,
