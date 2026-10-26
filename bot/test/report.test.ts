@@ -48,6 +48,22 @@ describe("engagement report (F04-S07, F04-D02, F04-D05)", () => {
     expect(r.proofs).toHaveLength(4);
   });
 
+  it("compares with the ISO week right before, even when it had no games", () => {
+    const r = buildReport({
+      group: "Kantor",
+      from: "2026-10-01",
+      to: "2026-10-31",
+      games: [
+        game(1, "2026-10-05T19:00:00Z", [1, 2, 3, 4, 5]), // W41
+        game(2, "2026-10-19T19:00:00Z", [1, 2, 3, 4, 5]), // W43; W42 had no games
+      ],
+    });
+    expect(r.weeks).toEqual([
+      { week: "2026-W41", games: 1, active: 5, firstWeek: true, returning: null, retention: null },
+      { week: "2026-W43", games: 1, active: 5, firstWeek: false, returning: 0, retention: null },
+    ]);
+  });
+
   it("never prints names, Telegram ids or wallet addresses", () => {
     const r = buildReport({ group: "Kantor", from: "2026-10-01", to: "2026-10-31", games: [game(1, "2026-10-05T19:00:00Z", [1, 2, 3, 4, 5])] });
     for (const lang of ["id", "en"] as const) {

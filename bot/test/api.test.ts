@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createApi } from "../src/api.js";
 import { NoxCreditsAbi, NoxGameAbi } from "../src/chain/contracts.js";
 import { EventIndexer, EventStore } from "../src/chain/indexer.js";
+import { buildReport } from "../src/report.js";
 import { ava, ben, CREDITS, cy, FakeChain, GAME, game, gameId, playGame } from "./chain-fakes.js";
 
 let server: Server | undefined;
@@ -95,6 +96,19 @@ describe("public API", () => {
     ]);
     const b = await (await get(`/v1/players/${ben}`)).json();
     expect(b.history[0]).toMatchObject({ role: "seer", won: true });
+  });
+
+  it("serves engagement with the Game Night report's definitions, over every group", async () => {
+    const { get, store } = await setup();
+    const r = await (await get("/v1/engagement?weeks=1")).json();
+    // The same function and the same games as a client report: only finalized games count.
+    const now = Math.floor(((1_790_000_000 + 200 * 4) * 1000 + 6 * 3600 * 1000) / 1000);
+    expect(r).toEqual(JSON.parse(JSON.stringify(buildReport({ group: "all", from: "2026-09-21", to: "2026-09-21", games: store.finalizedGames(0, now + 1) }))));
+    expect(r).toMatchObject({ games: 1, seats: 3, uniquePlayers: 3, verifiedHumans: null, period: { from: "2026-09-21", to: "2026-09-21" } });
+    expect(r.weeks).toEqual([{ week: "2026-W39", games: 1, active: 3, firstWeek: true, returning: null, retention: null }]);
+    expect(r.proofs).toEqual([]);
+    expect((await get("/v1/engagement?weeks=27")).status).toBe(400);
+    expect((await get("/v1/engagement/x")).status).toBe(404);
   });
 
   it("counts daily signers", async () => {

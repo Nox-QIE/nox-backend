@@ -8,10 +8,11 @@ import type { Lang } from "./i18n.js";
  * - unique players: distinct player wallets (one per Telegram account; not yet one per human);
  * - verified humans: distinct players verified with QIE ID; not available until QIE ID is live;
  * - weekly active: distinct players with a finalized game in an ISO week (UTC, Monday start);
- * - returning: weekly active players who also played the week before;
+ * - returning: weekly active players who also played the ISO week right before (0 after a week with no games);
  * - weekly retention: returning ÷ the previous week's active players.
  * Privacy (F04-D05): only counts leave this module, never names, Telegram ids or wallet addresses,
- * and any count of a week's players below SMALL is shown as "<3" so nobody can be singled out.
+ * and any count of a week's players from 1 to SMALL - 1 is shown as "<3" so nobody can be singled out
+ * (0 singles out no one, so it is shown).
  */
 export const SMALL = 3;
 
@@ -62,16 +63,16 @@ export function isoWeek(ts: number): string {
   return `${t.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
 }
 
-const hide = (n: number) => (n < SMALL ? null : n);
+const hide = (n: number) => (n > 0 && n < SMALL ? null : n);
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
 export function buildReport(o: { group: string; from: string; to: string; games: ReportGame[]; proofUrl?: (gameId: Hex) => string }): EngagementReport {
   const games = [...o.games].sort((a, b) => a.endedTs - b.endedTs);
   const unique = new Set(games.flatMap((g) => g.players.map((p) => p.toLowerCase())));
-  const byWeek = new Map<string, { games: number; players: Set<string> }>();
+  const byWeek = new Map<string, { games: number; players: Set<string>; ts: number }>();
   for (const g of games) {
     const w = isoWeek(g.endedTs);
-    const row = byWeek.get(w) ?? { games: 0, players: new Set<string>() };
+    const row = byWeek.get(w) ?? { games: 0, players: new Set<string>(), ts: g.endedTs };
     row.games++;
     for (const p of g.players) row.players.add(p.toLowerCase());
     byWeek.set(w, row);
@@ -91,7 +92,8 @@ export function buildReport(o: { group: string; from: string; to: string; games:
     credits: games.reduce((s, g) => s + g.credits, 0),
     weeks: weeks.map((w, i) => {
       const cur = byWeek.get(w)!;
-      const prev = i > 0 ? byWeek.get(weeks[i - 1]!) : undefined;
+      // "The week before" is the ISO week right before, which may have had no games at all.
+      const prev = i > 0 ? (byWeek.get(isoWeek(cur.ts - 7 * 86_400)) ?? { games: 0, players: new Set<string>(), ts: 0 }) : undefined;
       const returning = prev ? [...cur.players].filter((p) => prev.players.has(p)).length : 0;
       const prevSize = prev ? prev.players.size : 0;
       return {
