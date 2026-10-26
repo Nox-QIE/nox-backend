@@ -83,7 +83,8 @@ export class EventStore {
         streak_days INTEGER NOT NULL,
         best_streak INTEGER NOT NULL,
         last_day TEXT,
-        rank INTEGER NOT NULL
+        rank INTEGER NOT NULL,
+        badges TEXT NOT NULL DEFAULT '{}'
       );
       CREATE TABLE IF NOT EXISTS payment_reconciliations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -101,10 +102,17 @@ export class EventStore {
         orphan_mints INTEGER NOT NULL
       );
     `);
+    this.migrate();
   }
 
   close() {
     this.db.close();
+  }
+
+  /** Index files from before badges lack the column; adding it keeps them usable. */
+  private migrate() {
+    const cols = new Set((this.db.prepare("PRAGMA table_info(player_stats)").all() as { name: string }[]).map((c) => c.name));
+    if (!cols.has("badges")) this.db.exec("ALTER TABLE player_stats ADD COLUMN badges TEXT NOT NULL DEFAULT '{}'");
   }
 
   checkpoint(key: string): { block: bigint; hash: Hex | null } | null {
@@ -220,7 +228,8 @@ export class EventStore {
         Number(r.n),
       ]),
     );
-    const rows = [...new Set([...stats.keys(), ...credits.keys()])].map((account) => {
+    const awarded = this.rows("SELECT DISTINCT account FROM chain_events WHERE event = 'BadgeAwarded'").map((r) => r.account as string);
+    const rows = [...new Set([...stats.keys(), ...credits.keys(), ...awarded])].map((account) => {
       const p = stats.get(account) ?? { games: 0, wins: 0, days: new Set<number>() };
       const days = [...p.days].sort((a, b) => a - b);
       let best = 0;
@@ -234,13 +243,27 @@ export class EventStore {
       return { account, credits: credits.get(account) ?? 0, games: p.games, wins: p.wins, current, best, lastDay: last === undefined ? null : new Date(last * 86_400_000).toISOString().slice(0, 10) };
     });
     rows.sort((a, b) => b.credits - a.credits || b.wins - a.wins || a.account.localeCompare(b.account));
+    // Badges (NoxBadges): names from the latest BadgeDefined, counts from BadgeAwarded.
+    const names = new Map<string, string>();
+    for (const r of this.rows("SELECT args FROM chain_events WHERE event = 'BadgeDefined' ORDER BY block, log_index")) {
+      const a = JSON.parse(r.args as string) as { badgeId: string; name: string };
+      names.set(a.badgeId.toLowerCase(), a.name);
+    }
+    const badges = new Map<string, Record<string, number>>();
+    for (const r of this.rows("SELECT account, args FROM chain_events WHERE event = 'BadgeAwarded'")) {
+      const a = JSON.parse(r.args as string) as { badgeId: string };
+      const name = names.get(a.badgeId.toLowerCase()) ?? a.badgeId;
+      const mine = badges.get(r.account as string) ?? {};
+      mine[name] = (mine[name] ?? 0) + 1;
+      badges.set(r.account as string, mine);
+    }
     const insert = this.db.prepare(
-      "INSERT INTO player_stats (account, credits, games, wins, streak_days, best_streak, last_day, rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO player_stats (account, credits, games, wins, streak_days, best_streak, last_day, rank, badges) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     this.db.exec("BEGIN");
     try {
       this.db.exec("DELETE FROM player_stats");
-      rows.forEach((r, i) => insert.run(r.account, r.credits, r.games, r.wins, r.current, r.best, r.lastDay, i + 1));
+      rows.forEach((r, i) => insert.run(r.account, r.credits, r.games, r.wins, r.current, r.best, r.lastDay, i + 1, JSON.stringify(badges.get(r.account) ?? {})));
       this.db.exec("COMMIT");
     } catch (err) {
       this.db.exec("ROLLBACK");
@@ -267,7 +290,7 @@ export class EventStore {
     const to = Date.UTC(Number(m[1]), Number(m[2]), 1) / 1000;
     const by = new Map<string, PlayerStats>();
     for (const g of this.playerGames(from, to)) {
-      const p = by.get(g.account) ?? { account: g.account, credits: 0, games: 0, wins: 0, streakDays: 0, bestStreak: 0, lastDay: null, rank: 0 };
+      const p = by.get(g.account) ?? { account: g.account, credits: 0, games: 0, wins: 0, streakDays: 0, bestStreak: 0, lastDay: null, rank: 0, badges: {} };
       p.credits += g.credits;
       p.games++;
       if (g.won) p.wins++;
@@ -482,6 +505,8 @@ export interface PlayerStats {
   bestStreak: number;
   lastDay: string | null;
   rank: number;
+  /** Badge name → times awarded (NoxBadges). */
+  badges: Record<string, number>;
 }
 
 const toPlayerStats = (r: Record<string, string | number | null>): PlayerStats => ({
@@ -493,6 +518,7 @@ const toPlayerStats = (r: Record<string, string | number | null>): PlayerStats =
   bestStreak: Number(r.best_streak),
   lastDay: (r.last_day as string | null) ?? null,
   rank: Number(r.rank),
+  badges: JSON.parse((r.badges as string | null) ?? "{}") as Record<string, number>,
 });
 
 export interface OwnerLedger {
