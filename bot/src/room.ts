@@ -412,7 +412,7 @@ export class GameRoom {
     const roster = this.state!.seats.map((id) => ({ name: this.name(id), role: ended.roles[id]! }));
     // Nox themes (negative ids) are not Marketplace agents: they count as Nox's own GM for revenue.
     const agentId = this.agentId !== null && this.agentId > 0 ? this.agentId : null;
-    this.deps.store?.recordFinishedGame({ agentId, players: this.players.size, hostId: this.hostId, chainGameId: this.gameId });
+    this.deps.store?.recordFinishedGame({ agentId, players: this.players.size, hostId: this.hostId, chainGameId: this.gameId, chatId: this.chatId });
     let over = await this.narrator.gameOver(ended.winner, roster);
     if (this.gameId && this.deps.webUrl) over += `\n\n${this.t.verifyLink(`${this.deps.webUrl.replace(/\/+$/, "")}/game/?id=${this.gameId}`)}`;
     await this.deps.messenger.sendGroup(this.chatId, over);

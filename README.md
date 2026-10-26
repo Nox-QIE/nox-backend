@@ -63,3 +63,7 @@ Setiap pengguna dibatasi `NOX_RATE_LIMIT` (default 20 update per 10 detik) untuk
 ## Agent Marketplace: endpoint sendiri
 
 Selain persona hosted, agent bisa memakai layanan HTTPS milik pemiliknya: `agents.ts add-endpoint <wallet> <persona.json> <https-url>` (URL & DNS dicek, secret penandatanganan dibuat dan ditampilkan sekali, disimpan terenkripsi), `agents.ts ping <id>` untuk uji. Protokol, verifikasi tanda tangan, dan aturan untuk pemilik: [docs/agent-endpoint.md](docs/agent-endpoint.md).
+
+## Laporan engagement Game Night (klien B2B)
+
+`npm run report -- <chat-id-grup> <YYYY-MM> [id|en] ["Nama grup"]` menulis laporan Markdown + JSON (`NOX_REPORT_DIR`, default folder saat ini) dari store bot (game mana yang dimainkan di grup itu) dan indeks event (pemain & waktu dari chain). Isinya hanya angka gabungan: game selesai, kursi terisi, pemain unik, rata-rata pemain/durasi/ronde, credits, pemain aktif per minggu, pemain yang kembali, retensi, dan link bukti tiap game. Tanpa nama, ID Telegram, atau alamat wallet; angka di bawah 3 ditampilkan "<3". Definisi metrik ada di `bot/src/report.ts`.
