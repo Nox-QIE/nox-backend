@@ -89,7 +89,8 @@ Di mana tiap data store desain (D1–D16) berada sekarang (store bot, chain, ind
 
 - Tiap game selesai mencatat pemakaian AI di `gm_games` (model, token, biaya USD, beat oleh persona / suara Nox / template).
 - Lonjakan error memicu DM ke `NOX_OPERATOR_CHAT_ID` (maks sekali per jam per jenis): ≥3 `chain_error` dalam 10 menit, ≥10 `gm_error`, ≥5 `bot_error`. Insiden tunggal (game disputed, saldo operator menipis, agent di-suspend) punya alert sendiri.
-- `npm run ops:report [hari]`: per hari game, kursi, biaya AI, porsi template, gas, tx gagal, latihan Scam Shield (selesai/dimulai), dan saldo operator terakhir.
+- `npm run ops:report [hari]`: per hari game, kursi, biaya AI, porsi template, gas, tx gagal, latihan Scam Shield (selesai/dimulai), wallet baru, QIE yang di-drip (berapa untuk onboarding), dan saldo operator terakhir.
+- `npm run wallet:audit -- 0x<alamat>`: riwayat audit satu wallet pemain: kapan dibuat, tiap gas drip beserta alasannya (`onboarding` = gas pertama, `top-up`) dan jumlahnya, dan apakah akunnya dihapus (`/forget`). Hanya alamat: tanpa ID Telegram dan tanpa materi kunci.
 
 ## Pancingan diskusi
 

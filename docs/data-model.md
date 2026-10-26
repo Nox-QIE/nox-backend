@@ -9,6 +9,7 @@ The design (vault 10.04, DFD level 1) plans data stores D1–D16 in Postgres. Th
 | Design store | As built | Fields | Protection | Retention |
 |---|---|---|---|---|
 | D1 Player account | bot `users` | telegram_id (PK), locale, address (derived wallet, unique), status, started_at, last_seen | none needed (no keys) | until `/forget` |
+| D1 Wallet audit | bot `wallet_audit`; gas drips come from `chain_txs`; read with `npm run wallet:audit` | address, event (`created` / `forgotten`), detail, at | no Telegram id, no key material | kept (addresses are public on chain) |
 | D2 Keystore | **none**: wallets are derived with HKDF from `NOX_WALLET_SECRET` and the Telegram id (ADR-002) | – | the secret lives in env only | – |
 | D3 Game session | live state in `GameRoom` memory; bot `games` (game_id, chat_id, lang, status) for recovery; chain `GameCreated(configHash)`, `RolesCommitted`, `RoundRecorded`, `GameFinalized/Cancelled/Disputed` | | | `games` rows deleted 30 days after settle (disputed: kept) |
 | D4 Action & vote log | chain `NightActionCommitted` (hash), `NightActionRevealed`, `VoteCast`, with block and tx; bot `chain_txs` holds every tx hash, gas and status | | public by design | permanent (chain) |
@@ -17,7 +18,7 @@ The design (vault 10.04, DFD level 1) plans data stores D1–D16 in Postgres. Th
 | D7 Credits & stats | chain `NoxCredits` (truth) + `RewardGranted`; index `player_stats` (credits, games, wins, streak, rank, badges from `NoxBadges`), reconciled with `balanceOf` (`reconciliations`) | | | rebuildable |
 | D9 Payments & access | chain `NoxPayments` (passes, Game Nights, owner balances); index ledger + `payment_reconciliations` | | | permanent (chain) |
 | D10 Clients & schedule | bot `finished_games.chat_id` (the group of each game) for reports; bookings are not built yet | | | |
-| D14 Gas & tx ledger | bot `chain_txs` (step, from, to, hash, status, gas, fee, attempts, error), `operator_balances` | | | kept |
+| D14 Gas & tx ledger | bot `chain_txs` (step, from, to, hash, status, gas, fee, attempts, error; for gas drips also reason `onboarding` / `top-up` and the QIE sent), `operator_balances` | | | kept |
 | D15 Event index | index `chain_events`, `chain_checkpoints` | | | rebuildable |
 | D16 Agents & revenue | bot `agents` (owner, persona, mode, endpoint, **secret**, status, chain id, accepted terms version and time), `agent_games`, `agent_moderation`; chain `NoxAgentRegistry` (share, metadata hash); revenue from `NoxPayments` events in the index | | endpoint secret **AES-256-GCM** | kept |
 | D11–D13 Guilds, creators, hosts | not built (phase 2) | | | |

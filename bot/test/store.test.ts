@@ -82,3 +82,31 @@ describe("privacy", () => {
     expect(s.unsettledGames().map((g) => g.gameId)).toEqual(["0x02"]);
   });
 });
+
+describe("wallet audit (F01-D04, F01-D05)", () => {
+  const addr = "0x" + "Ab".repeat(20);
+
+  it("records creation once, gas drips with their reason, and /forget, by address only", () => {
+    const store = new SqliteStore(":memory:");
+    store.upsertUser(42, { locale: "id", address: null });
+    expect(store.walletAudit(addr)).toEqual([]);
+    store.upsertUser(42, { locale: "id", address: addr });
+    store.upsertUser(42, { locale: "en", address: addr }); // a later /start creates nothing
+    const tx = { gameId: null, step: "gas drip", from: "0x01" as `0x${string}`, to: addr as `0x${string}`, status: "success" as const, gasUsed: 21_000n, feeWei: 1n, block: 5n, attempts: 1, error: null };
+    store.recordTx({ ...tx, hash: ("0x" + "e".repeat(64)) as `0x${string}`, reason: "onboarding", valueWei: 10n ** 16n });
+    store.recordTx({ ...tx, step: "joinGame", from: addr as `0x${string}`, to: "0x02" as `0x${string}`, hash: null });
+    store.forgetUser(42);
+    const h = store.walletAudit(addr.toUpperCase().replace("0X", "0x"));
+    expect(h.map((e) => e.event)).toEqual(["created", "gas", "forgotten"]);
+    expect(h[1]!.detail).toBe(`onboarding 10000000000000000 wei, success 0x${"e".repeat(64)}`);
+    expect(store.walletsCreated(Date.now() - 60_000, Date.now() + 1)).toEqual([{ day: new Date().toISOString().slice(0, 10), wallets: 1 }]);
+  });
+
+  it("keeps no Telegram id or key material", () => {
+    const store = new SqliteStore(":memory:");
+    store.upsertUser(987654321, { locale: "id", address: addr });
+    const db = (store as unknown as { db: { prepare(s: string): { all(): Record<string, unknown>[] } } }).db;
+    expect(db.prepare("PRAGMA table_info(wallet_audit)").all().map((c) => c.name)).toEqual(["id", "address", "event", "detail", "at"]);
+    expect(JSON.stringify(db.prepare("SELECT * FROM wallet_audit").all())).not.toContain("987654321");
+  });
+});

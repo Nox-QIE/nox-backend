@@ -204,6 +204,10 @@ export interface TxRecord {
   block: bigint | null;
   attempts: number;
   error: string | null;
+  /** Why a gas drip was sent: "onboarding" (the wallet's first gas) or "top-up". */
+  reason?: string | null;
+  /** QIE sent with the transaction (gas drips), in wei. */
+  valueWei?: bigint | null;
 }
 
 export interface PlayerReward {
@@ -218,7 +222,7 @@ export interface PlayerReward {
   streakDays: number;
 }
 
-type TxContext = Pick<TxRecord, "gameId" | "step" | "from" | "to">;
+type TxContext = Pick<TxRecord, "gameId" | "step" | "from" | "to" | "reason" | "valueWei">;
 
 /** A mined transaction that reverted: final, retrying would only burn gas again. */
 class TxRevertedError extends Error {
@@ -631,13 +635,15 @@ export class ViemLedger implements GameLedger {
     this.reserveDrip(to, this.o.dripAmount - balance);
     const wallet = createWalletClient({ account: this.operator, chain: this.o.chain, transport: this.transport });
     const value = this.o.dripAmount - balance;
+    // An empty derived wallet has never been funded: its first gas is onboarding (F01-D04).
+    const reason = balance === 0n ? "onboarding" : "top-up";
     // A drip that was sent but whose response got lost shows up as a topped-up balance: never send twice.
     const hash = await this.withRetry(
-      { gameId, step: "gas drip", from: this.operator.address, to },
+      { gameId, step: "gas drip", from: this.operator.address, to, reason, valueWei: value },
       () => this.operatorSend((nonce) => wallet.sendTransaction({ to, value, nonce, chain: this.o.chain })),
       async () => (await this.publicClient.getBalance({ address: to })) >= this.o.minBalance,
     );
-    this.o.log?.({ event: "gas_drip", to, wei: value.toString(), hash });
+    this.o.log?.({ event: "gas_drip", to, wei: value.toString(), reason, hash });
     await this.checkOperatorBalance();
   }
 }
