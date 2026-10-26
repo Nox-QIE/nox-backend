@@ -76,6 +76,8 @@ export interface ViemLedgerOptions {
   dripDailyBudget?: bigint;
   /** How often to poll for receipts (ms). Default 1000. */
   pollingMs?: number;
+  /** Replaces the RPC transport (tests use it to simulate a misbehaving node). */
+  transport?: Transport;
   /** Called once a game is finalized or cancelled on-chain (to mark it settled in the store). */
   onSettled?: (gameId: Hex, outcome: "finalized" | "cancelled") => void;
   log?: (line: Record<string, unknown>) => void;
@@ -114,6 +116,30 @@ class GameQueue {
   }
 }
 
+/**
+ * Gas floors per NoxGame function: the most each used in the contract tests (12 players for
+ * revealAndFinalize), plus margin. On 26 Oct 2026 a QIE testnet RPC answered eth_estimateGas with
+ * 22088 for createGame (the cost of calling an address with no code, as if a lagging node lacked
+ * the contract); the transaction ran out of gas. Never send less than these.
+ */
+export const GAS_FLOOR: Record<string, bigint> = {
+  createGame: 110_000n,
+  joinGame: 150_000n,
+  commitRoles: 90_000n,
+  commitNightAction: 90_000n,
+  castVote: 90_000n,
+  recordRound: 90_000n,
+  revealAndFinalize: 1_800_000n,
+  cancelGame: 60_000n,
+};
+
+/** Gas limit to send: the node's estimate plus 25%, but never below the function's floor. */
+export function gasLimitFor(functionName: string, estimate: bigint): bigint {
+  const floor = GAS_FLOOR[functionName] ?? 100_000n;
+  const padded = (estimate * 125n) / 100n;
+  return padded > floor ? padded : floor;
+}
+
 /** Player actions that may run in parallel with each other (different wallets, same phase). */
 const PARALLEL_STEPS = new Set(["commitNightAction", "castVote"]);
 
@@ -141,7 +167,7 @@ export class ViemLedger implements GameLedger {
   private drippedTotalToday = 0n;
 
   constructor(private readonly o: ViemLedgerOptions) {
-    this.transport = rpcTransport(o.chain, o.rpcUrl);
+    this.transport = o.transport ?? rpcTransport(o.chain, o.rpcUrl);
     this.publicClient = createPublicClient({ chain: o.chain, transport: this.transport, pollingInterval: o.pollingMs ?? 1000 }) as PublicClient;
     this.operator = privateKeyToAccount(o.operatorKey);
   }
@@ -244,14 +270,10 @@ export class ViemLedger implements GameLedger {
   /** Simulate (so a revert surfaces with its custom error instead of burning gas), then submit. */
   private async submit(account: Account, functionName: string, args: readonly unknown[], nonce?: number): Promise<Hex> {
     const wallet = createWalletClient({ account, chain: this.o.chain, transport: this.transport });
-    const { request } = await this.publicClient.simulateContract({
-      account,
-      address: this.o.gameAddress,
-      abi: NoxGameAbi,
-      functionName: functionName as never,
-      args: args as never,
-    });
-    return wallet.writeContract({ ...(request as object), ...(nonce !== undefined ? { nonce } : {}) } as never);
+    const call = { account, address: this.o.gameAddress, abi: NoxGameAbi, functionName: functionName as never, args: args as never };
+    const { request } = await this.publicClient.simulateContract(call);
+    const gas = gasLimitFor(functionName, await this.publicClient.estimateContractGas(call));
+    return wallet.writeContract({ ...(request as object), gas, ...(nonce !== undefined ? { nonce } : {}) } as never);
   }
 
   private async confirm(hash: Hex, what: string) {

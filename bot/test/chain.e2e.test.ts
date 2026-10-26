@@ -1,5 +1,5 @@
 import { execSync, spawn, type ChildProcess } from "node:child_process";
-import { createPublicClient, createWalletClient, defineChain, http, type Address, type Hex } from "viem";
+import { createPublicClient, createWalletClient, custom, defineChain, http, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -14,7 +14,7 @@ import {
 } from "../src/chain/contracts.js";
 import { operatorFrom, registerAgentOnChain } from "../src/chain/operator.js";
 import { settleMonth } from "../src/chain/settle.js";
-import { rpcTransport, ViemLedger } from "../src/chain/viem-ledger.js";
+import { gasLimitFor, rpcTransport, ViemLedger } from "../src/chain/viem-ledger.js";
 import { PlayerWallets } from "../src/chain/wallets.js";
 import { TemplateNarrator } from "../src/narrator.js";
 import type { GameLedger } from "../src/chain/ledger.js";
@@ -288,5 +288,40 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     expect(owed).toBe(9n * 10n ** 17n);
     // Settling the same month again is refused by the contract.
     await expect(settleMonth(store, op, { registry, payments }, month, "0x0000000000000000000000000000000000000000", true)).rejects.toThrow();
+  }, 60_000);
+
+  it("does not trust a node that underestimates gas (QIE testnet answered 22088 for createGame)", async () => {
+    // A transport that forwards everything to anvil but answers eth_estimateGas with the intrinsic
+    // gas only, like a node that does not have the contract yet.
+    const base = http(RPC)({ chain });
+    const lying = custom({
+      async request({ method, params }) {
+        if (method === "eth_estimateGas") return "0x5648"; // 22088
+        return base.request({ method, params } as never);
+      },
+    });
+    const logs: Record<string, unknown>[] = [];
+    const wallets = new PlayerWallets(Uint8Array.from({ length: 32 }, (_, i) => 150 + i));
+    const ledger = new ViemLedger({
+      chain,
+      gameAddress,
+      operatorKey: OPERATOR_KEY,
+      wallets,
+      minBalance: 10n ** 15n,
+      dripAmount: 10n ** 16n,
+      pollingMs: 50,
+      transport: lying,
+      log: (l) => logs.push(l),
+    });
+    const users = [601, 602, 603, 604, 605];
+    const gameId = ("0x" + "77".repeat(32)) as Hex;
+    const { commitRoles } = await import("@nox/shared/crypto-spec");
+    const roles = users.map((u, i) => ({ player: wallets.address(u), role: (i === 0 ? "werewolf" : i === 1 ? "seer" : i === 2 ? "doctor" : "villager") as never }));
+    ledger.startGame(gameId, ("0x" + "00".repeat(32)) as Hex, users, commitRoles(gameId, roles).root);
+    await ledger.idle();
+    expect(logs.filter((l) => l.event === "chain_error")).toEqual([]);
+    expect(await ledger.statusOf(gameId)).toBe(2); // Running: create, 5 joins and commitRoles all landed
+    expect(gasLimitFor("createGame", 22088n)).toBe(110_000n);
+    expect(gasLimitFor("revealAndFinalize", 1_500_000n)).toBe(1_875_000n);
   }, 60_000);
 });
