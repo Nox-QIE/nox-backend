@@ -130,6 +130,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   };
 }
 
+/**
+ * What each Game Master provider promises about the prompts it receives (docs/llm-data-policy.md,
+ * F09-D06). "verified": its own terms say API data is not used for training and state how long it is
+ * kept. "unverified": it forwards prompts to an upstream whose policy Nox could not find.
+ */
+export const GM_PROVIDER_POLICY: Record<GmProvider, "verified" | "unverified"> = { anthropic: "verified", oxion: "unverified" };
+
+/** A startup warning when narration facts (player display names included) would pass an unverified provider. */
+export function gmDataPolicyWarning(gm: GmConfig, network: ChainConfig["network"]): string | null {
+  if (gm.mode !== "llm") return null;
+  const unverified = [...new Set(gm.pool.filter((e) => GM_PROVIDER_POLICY[e.provider] === "unverified").map((e) => e.provider))];
+  if (!unverified.length) return null;
+  const where = network === "mainnet" ? "Do not use it with real players on mainnet" : "Fine for testing; do not use it with real players";
+  return `GM provider ${unverified.join(", ")} forwards prompts to an upstream with no published data policy (see docs/llm-data-policy.md). ${where}.`;
+}
+
 export function loadGmConfig(env: NodeJS.ProcessEnv = process.env): GmConfig {
   const mode = env.NOX_GM ?? "template";
   if (mode !== "template" && mode !== "llm") throw new Error('NOX_GM must be "template" or "llm"');

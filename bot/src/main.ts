@@ -1,4 +1,4 @@
-import { loadConfig } from "./config.js";
+import { gmDataPolicyWarning, loadConfig } from "./config.js";
 import { installLogRedaction, secretsFrom } from "./redact.js";
 
 // Before anything can log: keys and tokens never reach the output (F11-D04).
@@ -19,6 +19,8 @@ await bot.api.setMyCommands([
 ]);
 
 const allowed_updates = ["message", "callback_query"] as const;
+const policyWarning = gmDataPolicyWarning(config.gm, config.chain.network);
+if (policyWarning) console.warn(JSON.stringify({ event: "gm_data_policy", warning: policyWarning }));
 const gmLabel = config.gm.mode === "llm" ? config.gm.pool.map((e) => `${e.provider}:${e.model}@${e.weight}`).join(", ") : "template";
 
 if (config.webhook) {
