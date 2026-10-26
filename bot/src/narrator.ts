@@ -11,6 +11,8 @@ export interface Narrator {
   morning(view: PublicView, eliminated: string | null, revealedRole: Role | null): Promise<string>;
   dayResult(view: PublicView, eliminated: string | null, revealedRole: Role | null): Promise<string>;
   gameOver(winner: Team, roster: { name: string; role: Role }[]): Promise<string>;
+  /** A prompt for a quiet discussion (F07-S02); never names a player. */
+  nudge?(view: PublicView): Promise<string>;
   /** Called once when the game ends or is cancelled (e.g. to report LLM usage). */
   finish?(): NarratorReport | void;
 }
@@ -46,6 +48,20 @@ export interface Wording {
   dayOut?: (name: string, role: string) => string;
   dayNone?: string;
 }
+
+/** Open questions for a quiet discussion; they never point at anyone. */
+const NUDGES: Record<Lang, string[]> = {
+  id: [
+    "🎙 Sunyi sekali. Siapa yang paling yakin dengan pilihannya, dan kenapa?",
+    "🎙 Ada yang curiga tapi belum bicara? Sekarang waktunya.",
+    "🎙 Malam tadi meninggalkan petunjuk. Apa yang terasa aneh menurut kalian?",
+  ],
+  en: [
+    "🎙 So quiet. Who is most sure of their pick, and why?",
+    "🎙 Anyone suspicious but still silent? Now is the time.",
+    "🎙 Last night left clues. What felt off to you?",
+  ],
+};
 
 export class TemplateNarrator implements Narrator {
   constructor(
@@ -95,5 +111,10 @@ export class TemplateNarrator implements Narrator {
     const lines = roster.map((p) => `• ${p.name}: ${this.role(p.role)}`).join("\n");
     const team = this.w.team ? this.w.team(winner) : teamName(this.lang, winner);
     return this.lang === "id" ? `🏁 Permainan selesai. Pemenang: <b>${team}</b>\n\n${lines}` : `🏁 Game over. Winners: <b>${team}</b>\n\n${lines}`;
+  }
+
+  async nudge(view: PublicView) {
+    const lines = NUDGES[this.lang];
+    return lines[(view.round - 1) % lines.length]!;
   }
 }

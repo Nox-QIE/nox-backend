@@ -53,6 +53,8 @@ export interface Config {
   operatorChatId?: number;
   /** The indexer's public API (npm run indexer), for player stats in the bot. Optional. */
   apiUrl?: string;
+  /** Nudge a quiet discussion: "quiet" (default, needs Telegram privacy mode off), "always", "off". */
+  nudge: "quiet" | "always" | "off";
   /** "required": themes, Marketplace GMs and big lobbies need the host's Host Pass (NoxPayments). */
   hostPass: "off" | "required";
   /** Webhook mode when set; long polling otherwise. */
@@ -88,6 +90,11 @@ function loadWebhook(env: NodeJS.ProcessEnv): NonNullable<Config["webhook"]> {
   return { url, secret, port, host: env.NOX_WEBHOOK_HOST || "127.0.0.1" };
 }
 
+function nudgeMode(v = "quiet"): "quiet" | "always" | "off" {
+  if (v !== "quiet" && v !== "always" && v !== "off") throw new Error('NOX_DISCUSSION_NUDGE must be "quiet", "always" or "off"');
+  return v;
+}
+
 function hostPassMode(env: NodeJS.ProcessEnv): "off" | "required" {
   const v = env.NOX_HOST_PASS || "off";
   if (v !== "off" && v !== "required") throw new Error('NOX_HOST_PASS must be "off" or "required"');
@@ -109,6 +116,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ...(env.NOX_WEBHOOK_URL ? { webhook: loadWebhook(env) } : {}),
     rateLimit: parseRateLimit(env.NOX_RATE_LIMIT || "20/10"),
     hostPass: hostPassMode(env),
+    nudge: nudgeMode(env.NOX_DISCUSSION_NUDGE),
     timings: {
       lobbyMs: seconds(env, "LOBBY_SECONDS", DEFAULT_TIMINGS.lobbyMs),
       nightMs: seconds(env, "NIGHT_SECONDS", DEFAULT_TIMINGS.nightMs),

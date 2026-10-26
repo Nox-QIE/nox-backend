@@ -50,6 +50,12 @@ export interface RoomDeps {
    * Master, more than FREE_MAX_PLAYERS players. Unset = no gating (NOX_HOST_PASS=off).
    */
   hostPass?: (userId: number) => Promise<boolean>;
+  /**
+   * Nudge a quiet discussion halfway through (F07-S02). "quiet" needs `canCountMessages` (the bot
+   * reads group messages only with Telegram privacy mode off); "always" nudges once every discussion.
+   */
+  nudge?: "quiet" | "always";
+  canCountMessages?: boolean;
   /** Every finished game's narrator report (AI cost per game, F09-D05). */
   onGameReport?: (r: { gameId: Hex | null; agentId: number | null; players: number; report: NarratorReport }) => void;
   /** A finished game narrated by a Marketplace agent: how its persona behaved (F18-S11). */
@@ -75,6 +81,8 @@ export class GameRoom {
   private assignments: RoleAssignment[] = [];
   private lobbyMessageId: number | null = null;
   private cancelTimer: (() => void) | null = null;
+  private cancelNudge: (() => void) | null = null;
+  private discussionMessages = 0;
   private phaseStep: "night" | "discussion" | "vote" | null = null;
   private queue: Promise<unknown> = Promise.resolve();
   private readonly t;
@@ -363,11 +371,32 @@ export class GameRoom {
       await this.deps.messenger.sendGroup(this.chatId, hint);
     }
     this.phaseStep = "discussion";
+    this.discussionMessages = 0;
     await this.deps.messenger.sendGroup(this.chatId, this.t.discussion(Math.round(this.deps.timings.discussionMs / 1000)));
     this.schedule(this.deps.timings.discussionMs, () => this.openVote());
+    const mode = this.deps.nudge === "quiet" && !this.deps.canCountMessages ? undefined : this.deps.nudge;
+    if (mode && this.narrator.nudge) {
+      const round = this.state!.round;
+      this.cancelNudge = this.deps.scheduler.schedule(Math.floor(this.deps.timings.discussionMs / 2), () => void this.run(() => this.maybeNudge(round, mode)));
+    }
+  }
+
+  /** A group message seen by the bot (only possible with Telegram privacy mode off). */
+  noteGroupMessage() {
+    if (this.phaseStep === "discussion") this.discussionMessages++;
+  }
+
+  private async maybeNudge(round: number, mode: "quiet" | "always") {
+    if (this.phaseStep !== "discussion" || this.state?.round !== round) return;
+    const alive = this.state.seats.filter((id) => this.state!.players[id]!.alive).length;
+    // Quiet = fewer messages than living players by halfway.
+    if (mode === "quiet" && this.discussionMessages >= alive) return;
+    await this.deps.messenger.sendGroup(this.chatId, await this.narrator.nudge!(publicView(this.state, this.events)));
   }
 
   private async openVote() {
+    this.cancelNudge?.();
+    this.cancelNudge = null;
     if (this.phaseStep !== "discussion") return;
     this.phaseStep = "vote";
     const s = this.state!;
