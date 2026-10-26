@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { recoverGames } from "../src/recovery.js";
 import { noLedger, type GameLedger } from "../src/chain/ledger.js";
 import { SqliteStore } from "../src/store.js";
-import { alertDispute } from "../src/telegram.js";
+import { alertDispute, sendRewardDms } from "../src/telegram.js";
 import { FakeMessenger } from "./fakes.js";
 
 const gameId = ("0x" + "ab".repeat(32)) as Hex;
@@ -49,5 +49,28 @@ describe("disputed games (F08-S03)", () => {
     expect(calls).toEqual([]);
     expect(store.gameInfo(gameId)?.status).toBe("disputed");
     expect(logs).toContainEqual(expect.objectContaining({ event: "game_disputed", reason: "reveal_timeout" }));
+  });
+
+  it("DMs each player their credits breakdown in the game's language (F08-S08)", async () => {
+    const store = newStore();
+    store.saveGame(gameId, -100, "id", secret);
+    const messenger = new FakeMessenger();
+    await sendRewardDms({
+      messenger,
+      store,
+      gameId,
+      rewards: [
+        { userId: 1, base: 30, role: 5, vote: 2, streak: 4, total: 41, streakDays: 3 },
+        { userId: 2, base: 10, role: 0, vote: 0, streak: 0, total: 10, streakDays: 1 },
+      ],
+    });
+    const seer = messenger.dms(1)[0]!.html;
+    expect(seer).toContain("<b>41 Nox Credits</b>");
+    expect(seer).toContain("Peran dimainkan dengan baik: +5");
+    expect(seer).toContain("Streak harian (3 hari berturut-turut): +4");
+    const wolf = messenger.dms(2)[0]!.html;
+    expect(wolf).toContain("<b>10 Nox Credits</b>");
+    expect(wolf).not.toContain("Peran");
+    expect(wolf).not.toContain("Streak");
   });
 });
