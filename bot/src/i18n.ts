@@ -80,6 +80,7 @@ type Dict = {
   wolfMsg: (from: string, text: string) => string;
   discussion: (secs: number) => string;
   voteOpen: (secs: number) => string;
+  noSelfVote: string;
   voteOk: (target: string) => string;
   voted: (voter: string, target: string) => string;
   noPermission: string;
@@ -169,7 +170,8 @@ export const T: Record<Lang, Dict> = {
     inspection: (t, w) => `🔮 ${t} ${w ? "<b>adalah werewolf</b>" : "<b>bukan werewolf</b>"}.`,
     wolfMsg: (from, text) => `🐺 ${from}: ${text}`,
     discussion: (s) => `☀️ Diskusi dimulai. ${s} detik sebelum voting.`,
-    voteOpen: (s) => `🗳️ Voting dibuka (${s} detik). Siapa yang dicurigai?`,
+    voteOpen: (s) => `🗳️ Voting dibuka (${s} detik). Siapa yang dicurigai? Kamu tidak bisa memilih dirimu sendiri.`,
+    noSelfVote: "Kamu tidak bisa memilih dirimu sendiri.",
     voteOk: (t) => `Vote tercatat: ${t}.`,
     voted: (v, t) => `${v} memilih ${t}.`,
     noPermission: "Kamu tidak bisa melakukan itu sekarang.",
@@ -257,7 +259,8 @@ export const T: Record<Lang, Dict> = {
     inspection: (t, w) => `🔮 ${t} ${w ? "<b>is a werewolf</b>" : "<b>is not a werewolf</b>"}.`,
     wolfMsg: (from, text) => `🐺 ${from}: ${text}`,
     discussion: (s) => `☀️ Discussion starts. Voting in ${s}s.`,
-    voteOpen: (s) => `🗳️ Voting is open (${s}s). Who do you suspect?`,
+    voteOpen: (s) => `🗳️ Voting is open (${s}s). Who do you suspect? You cannot vote for yourself.`,
+    noSelfVote: "You cannot vote for yourself.",
     voteOk: (t) => `Vote recorded: ${t}.`,
     voted: (v, t) => `${v} voted for ${t}.`,
     noPermission: "You can't do that right now.",

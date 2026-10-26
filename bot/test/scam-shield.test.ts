@@ -64,7 +64,7 @@ describe("a Scam Shield game", () => {
     expect(messenger.group().some((h) => h.startsWith("🚩 Tanda bahaya: tawaran kerja"))).toBe(true);
 
     await scheduler.advance(1000); // discussion → vote
-    for (const u of users.filter((u) => room.isAlive(u))) await room.vote(u, 1, String(wolf));
+    for (const u of users.filter((u) => room.isAlive(u))) await room.vote(u, 1, String(u === wolf ? users.filter((u) => room.isAlive(u)).find((x) => x !== wolf) : wolf)); // no self-votes
     expect(room.status).toBe("ended");
     const group = messenger.group();
     expect(group.some((h) => h.includes("Pemenang: <b>Grup yang waspada</b>"))).toBe(true);

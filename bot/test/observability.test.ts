@@ -73,7 +73,7 @@ describe("AI cost per game (F09-D05)", () => {
     await room.nightAction(role("seer")[0]!, 1, String(wolf));
     await room.nightAction(role("doctor")[0]!, 1, String(role("doctor")[0]));
     await scheduler.advance(1000);
-    for (const u of users.filter((u) => room.isAlive(u))) await room.vote(u, 1, String(wolf));
+    for (const u of users.filter((u) => room.isAlive(u))) await room.vote(u, 1, String(u === wolf ? users.filter((u) => room.isAlive(u)).find((x) => x !== wolf) : wolf)); // no self-votes
     expect(store.gmGames(0, Date.now() + 1)).toEqual([expect.objectContaining({ agentId: null, players: 5, model: "claude-opus-5-5", inputTokens: 3000, costUsd: 0.02, template: 1 })]);
   });
 });

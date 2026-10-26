@@ -59,7 +59,7 @@ describe("Nox themes", () => {
     const wolf = users.find((u) => room.roleOf(u) === "werewolf")!;
     await scheduler.advance(1000);
     await scheduler.advance(1000);
-    for (const u of users) await room.vote(u, 1, String(wolf));
+    for (const u of users) await room.vote(u, 1, String(u === wolf ? users.find((x) => x !== wolf) : wolf)); // no self-votes
     expect(store.finishedGames(0, Date.now() + 1)[0]!.agentId).toBeNull();
   });
 });

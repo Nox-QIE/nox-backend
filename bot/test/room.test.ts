@@ -117,9 +117,10 @@ describe("full game", () => {
     // Dead players cannot vote.
     expect((await room.vote(victim, 1, String(wolf))).ok).toBe(false);
 
-    // Every living player votes the wolf → day resolves early → village wins.
-    for (const u of USERS.filter((u) => room.isAlive(u))) {
-      expect((await room.vote(u, 1, String(wolf))).ok).toBe(true);
+    // Every living player votes the wolf (the wolf votes someone else) → day resolves early → village wins.
+    const alive = USERS.filter((u) => room.isAlive(u));
+    for (const u of alive) {
+      expect((await room.vote(u, 1, String(u === wolf ? alive.find((x) => x !== wolf) : wolf))).ok).toBe(true);
     }
     expect(room.status).toBe("ended");
     const last = messenger.group().at(-1)!;

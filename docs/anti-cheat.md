@@ -12,6 +12,7 @@ Red-team of cheating by players and by the server (APP-11). The tests live in `b
 | Parallel taps or a script racing the bot | Each room runs one action at a time (`run` queue); lobby never overfills | `GameRoom` |
 | Join twice, after the start, or in two games at once | Lobby checks; one game per user | `GameRoom`, `Registry` |
 | Start the game or pick the Game Master as a non-host | Host check | `GameRoom` |
+| Vote for yourself (the vote buttons are one group message, so everyone sees their own name) | Refused with a toast; nothing reaches the engine or the chain; the vote prompt says so | `GameRoom.vote` |
 | Pose as a werewolf in the werewolf chat | Only living werewolves at night are relayed | `GameRoom.wolfChat` |
 | Flood commands, buttons or DMs | Per-user rate limit (`NOX_RATE_LIMIT`) | `ratelimit.ts` |
 | Inject instructions or links through a display name or a persona | Prompt guard, name cleaning, 20 red-team attacks | `gm/guard.ts`, `names.ts` |

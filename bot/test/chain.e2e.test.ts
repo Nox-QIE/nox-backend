@@ -135,7 +135,7 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     await room.nightAction(seer!, 1, String(wolf));
     await room.nightAction(doctor!, 1, String(doctor));
     await scheduler.advance(1000); // discussion → vote
-    for (const u of users.filter((u) => room.isAlive(u))) await room.vote(u, 1, String(wolf));
+    for (const u of users.filter((u) => room.isAlive(u))) await room.vote(u, 1, String(u === wolf ? users.filter((u) => room.isAlive(u)).find((x) => x !== wolf) : wolf)); // no self-votes
     expect(room.status).toBe("ended");
     expect(messenger.group().at(-1)).toContain(`https://nox.example/game/?id=${room.gameId}`);
 
@@ -230,7 +230,7 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
         const wolf = users.find((u) => room.roleOf(u) === "werewolf")!;
         await scheduler.advance(1000); // night passes with no actions
         await scheduler.advance(1000); // discussion → vote
-        for (const u of users) await room.vote(u, 1, String(wolf));
+        for (const u of users) await room.vote(u, 1, String(u === wolf ? users.find((x) => x !== wolf) : wolf)); // no self-votes
         expect(room.status).toBe("ended");
       }
       return room.gameId!;
@@ -423,7 +423,7 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     await room.nightAction(role("seer")[0]!, 1, String(wolf));
     await room.nightAction(role("doctor")[0]!, 1, String(role("doctor")[0]));
     await scheduler.advance(1000);
-    for (const u of users.filter((u) => room.isAlive(u))) await room.vote(u, 1, String(wolf));
+    for (const u of users.filter((u) => room.isAlive(u))) await room.vote(u, 1, String(u === wolf ? users.filter((u) => room.isAlive(u)).find((x) => x !== wolf) : wolf)); // no self-votes
     await ledger.idle();
     expect(logs.filter((l) => l.event === "chain_error" || l.event === "badge_error")).toEqual([]);
     expect(logs).toContainEqual(expect.objectContaining({ event: "badge_awarded", badge: "SCAM_SPOTTER", players: 4 }));

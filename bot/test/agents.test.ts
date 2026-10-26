@@ -98,7 +98,7 @@ describe("agent picker in the lobby", () => {
     const wolf = [11, 22, 33, 44, 55].find((u) => room.roleOf(u) === "werewolf")!;
     await scheduler.advance(1000);
     await scheduler.advance(1000);
-    for (const u of [11, 22, 33, 44, 55]) await room.vote(u, 1, String(wolf));
+    for (const u of [11, 22, 33, 44, 55]) await room.vote(u, 1, String(u === wolf ? [11, 22, 33, 44, 55].find((x) => x !== wolf) : wolf)); // no self-votes
     expect(room.status).toBe("ended");
     expect(store.agentUsage(0, Date.now() + 1)).toEqual([{ agentId: id, games: 1, players: 5 }]);
     expect(store.finishedGames(0, Date.now() + 1)[0]).toMatchObject({ agentId: id, players: 5, hostId: 11 });
