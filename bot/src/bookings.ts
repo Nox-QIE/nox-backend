@@ -68,7 +68,7 @@ export function checkPayment(b: Pick<Booking, "token" | "price" | "chainAgentId"
 
 const unit = (b: Pick<Booking, "token">) => (b.token === NATIVE ? "QIE" : b.token);
 
-/** The hash recorded on chain for a receipt: bound to the booking, so one file cannot serve two. */
+/** The hash recorded on chain for a receipt: bound to the booking (or pass holder), so one file cannot serve two. */
 export const receiptHash = (bookingId: Hex, receipt: Uint8Array): Hex => keccak256(concat([bookingId, keccak256(receipt)]));
 
 const rupiah = (n: number) => `Rp ${n.toLocaleString("id-ID")}`;

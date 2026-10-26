@@ -516,6 +516,41 @@ export class EventStore {
     };
   }
 
+  /**
+   * D9 pass purchases (F14-D01), all from public events: bought on chain (PassPurchased; the payer from
+   * PassPaidBy in the same transaction when someone paid for another wallet) or paid in rupiah and
+   * recorded by the operator (FiatPassRecorded, with the hash of its receipt). `expiresAt` is the
+   * holder's expiry right after that purchase; passes stack, so the latest row is the one in force.
+   */
+  passPurchases(holder?: Address, nowTs = Math.floor(Date.now() / 1000)): PassPurchase[] {
+    const rows = holder
+      ? this.rows("SELECT * FROM chain_events WHERE event IN ('PassPurchased', 'FiatPassRecorded') AND account = ? ORDER BY block, log_index", holder.toLowerCase())
+      : this.rows("SELECT * FROM chain_events WHERE event IN ('PassPurchased', 'FiatPassRecorded') ORDER BY block, log_index");
+    return rows.map((r) => {
+      const a = JSON.parse(r.args as string) as Record<string, string>;
+      const onchain = r.event === "PassPurchased";
+      const paidBy = onchain
+        ? (this.rows("SELECT args FROM chain_events WHERE event = 'PassPaidBy' AND tx_hash = ?", r.tx_hash as string)[0]?.args as string | undefined)
+        : undefined;
+      const expiresAt = Number(a.expiresAt);
+      return {
+        id: `${r.tx_hash as string}:${Number(r.log_index)}`,
+        holder: (r.account as string).toLowerCase() as Address,
+        payer: onchain ? ((paidBy ? (JSON.parse(paidBy) as { payer: string }).payer : (r.account as string)).toLowerCase() as Address) : null,
+        passType: Number(a.passType),
+        periods: Number(a.periods),
+        rail: onchain ? "onchain" : "rupiah",
+        token: onchain ? (a.token as Address) : null,
+        amount: onchain ? BigInt(a.amount!) : null,
+        receiptHash: onchain ? null : (a.receiptHash as Hex),
+        expiresAt,
+        status: expiresAt > nowTs ? "active" : "expired",
+        block: Number(r.block),
+        ts: Number(r.ts),
+      };
+    });
+  }
+
   /** The receipt hash recorded for a rupiah-paid Game Night (FiatGameNightRecorded), or null. */
   fiatGameNightRecord(bookingId: Hex): { agentId: number; receiptHash: Hex; tx: Hex; block: number } | null {
     const r = this.rows("SELECT tx_hash, block, args FROM chain_events WHERE event = 'FiatGameNightRecorded' AND lower(json_extract(args, '$.bookingId')) = ?", bookingId.toLowerCase())[0];
@@ -540,6 +575,24 @@ export class EventStore {
       fromTs,
     ).map((r) => ({ day: r.day as string, players: Number(r.players) }));
   }
+}
+
+/** One row of D9 (F14-D01). Rupiah amounts are not on chain; the bot store keeps them (`fiat_passes`). */
+export interface PassPurchase {
+  id: string;
+  holder: Address;
+  /** Who paid on chain (the holder, or another wallet via buyPassFor); null for rupiah. */
+  payer: Address | null;
+  passType: number;
+  periods: number;
+  rail: "onchain" | "rupiah";
+  token: Address | null;
+  amount: bigint | null;
+  receiptHash: Hex | null;
+  expiresAt: number;
+  status: "active" | "expired";
+  block: number;
+  ts: number;
 }
 
 const ROLE_NAMES: Record<number, string> = { 1: "villager", 2: "werewolf", 3: "seer", 4: "doctor" };

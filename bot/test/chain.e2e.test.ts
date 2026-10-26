@@ -15,7 +15,7 @@ import {
   NoxPaymentsBytecode,
 } from "../src/chain/contracts.js";
 import { EventIndexer, EventStore, reconcileCredits, reconcilePayments, type IndexerClient } from "../src/chain/indexer.js";
-import { operatorFrom, recordFiatGameNightOnChain, registerAgentOnChain } from "../src/chain/operator.js";
+import { operatorFrom, recordFiatGameNightOnChain, recordFiatPassOnChain, registerAgentOnChain } from "../src/chain/operator.js";
 import { PassReader, type PassClient } from "../src/chain/passes.js";
 import { settleMonth } from "../src/chain/settle.js";
 import { gasLimitFor, rpcTransport, ViemLedger, type PlayerReward, type TxRecord } from "../src/chain/viem-ledger.js";
@@ -342,6 +342,12 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     await recordFiatGameNightOnChain(op, payments, fiatBooking, Number(chainAgentId), receipt);
     await expect(recordFiatGameNightOnChain(op, payments, fiatBooking, Number(chainAgentId), receipt)).rejects.toThrow();
 
+    // A Host Pass paid in rupiah: the operator records it and the holder's pass grows by one period (D9).
+    const expiry = () => publicClient.readContract({ address: payments, abi: NoxPaymentsAbi, functionName: "passExpiry", args: [host.address, 1] });
+    const before = await expiry();
+    await recordFiatPassOnChain(op, payments, host.address, 1, 1, keccak256(toHex("pass-receipt")));
+    expect((await expiry()) - before).toBe(30n * 86400n);
+
     // Revenue ledger from the events (F18-D05), reconciled with the contract at the indexed block.
     const index = new EventStore(":memory:");
     await new EventIndexer({
@@ -352,6 +358,10 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
       confirmations: 0n,
     }).syncOnce();
     expect(index.fiatGameNightRecord(fiatBooking)).toMatchObject({ agentId: Number(chainAgentId), receiptHash: receipt });
+    expect(index.passPurchases(host.address).map((p) => [p.rail, p.periods, p.receiptHash])).toEqual([
+      ["onchain", 4, null],
+      ["rupiah", 1, keccak256(toHex("pass-receipt"))],
+    ]);
     const ledger = index.paymentLedger();
     expect(ledger.agents).toEqual([{ agentId: Number(chainAgentId), owner, token: NATIVE, gameNights: 6n * 10n ** 17n, pool: 9n * 10n ** 17n, total: 15n * 10n ** 17n }]);
     expect(ledger.treasury).toEqual([{ token: NATIVE, passes: 4n * 10n ** 18n, gameNights: 14n * 10n ** 17n, pool: 9n * 10n ** 17n, withdrawn: 0n, balance: 45n * 10n ** 17n }]);

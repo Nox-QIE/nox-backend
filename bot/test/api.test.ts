@@ -65,6 +65,7 @@ describe("public API", () => {
     expect(sept.players.map((p: { account: string }) => p.account)).toEqual([ben, cy, ava]);
     expect((await (await get("/v1/leaderboard?season=2026-10")).json()).players).toEqual([]);
     const p = await (await get(`/v1/players/${ben}`)).json();
+    expect(p.passes).toEqual([]);
     expect(p.stats).toMatchObject({ credits: 30, games: 1, wins: 1, bestStreak: 1, rank: 1 });
   });
 

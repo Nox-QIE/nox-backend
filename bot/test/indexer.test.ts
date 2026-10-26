@@ -213,4 +213,30 @@ describe("event indexer", () => {
     expect(bad.mismatches).toEqual([{ kind: "owner", owner: ben, token: QIE, indexed: "500000000000000000", onChain: "800000000000000000" }]);
     expect(store.lastPaymentReconciliation()!.mismatches).toHaveLength(1);
   });
+
+  it("keeps the D9 pass ledger: on-chain purchases with their payer, rupiah ones with their receipt (F14-D01)", async () => {
+    const chain = new FakeChain();
+    const store = new EventStore(":memory:");
+    const indexer = new EventIndexer({ client: chain, store, contracts: [{ name: "NoxPayments", address: PAYMENTS, abi: NoxPaymentsAbi as Abi }], fromBlock: 100n, confirmations: 0n });
+    const QIE = "0x0000000000000000000000000000000000000000";
+    const receipt = keccak256(toHex("receipt"));
+    chain.logs.push(
+      pay("PassPurchased", { buyer: ava, passType: 1, periods: 1, token: QIE, amount: 10n ** 18n, expiresAt: 1_000n }, 110n, 0),
+      pay("PassPaidBy", { payer: cy, holder: ava, passType: 1 }, 110n, 1),
+      pay("PassPurchased", { buyer: ben, passType: 1, periods: 2, token: QIE, amount: 2n * 10n ** 18n, expiresAt: 9_000_000_000n }, 120n),
+      pay("FiatPassRecorded", { buyer: ben, passType: 1, periods: 1, receiptHash: receipt, expiresAt: 9_100_000_000n }, 130n),
+    );
+    const same = chain.logs.filter((x) => x.blockNumber === 110n);
+    for (const x of same) x.transactionHash = same[0]!.transactionHash;
+    chain.head = 200n;
+    await indexer.syncOnce();
+    const all = store.passPurchases(undefined, 2_000);
+    expect(all.map((p) => [p.holder, p.payer, p.rail, p.status])).toEqual([
+      [ava.toLowerCase(), cy.toLowerCase(), "onchain", "expired"],
+      [ben.toLowerCase(), ben.toLowerCase(), "onchain", "active"],
+      [ben.toLowerCase(), null, "rupiah", "active"],
+    ]);
+    expect(store.passPurchases(ben, 2_000)[1]).toMatchObject({ periods: 1, receiptHash: receipt, amount: null, token: null, expiresAt: 9_100_000_000 });
+    expect(store.passPurchases(ava, 2_000)[0]).toMatchObject({ amount: 10n ** 18n, periods: 1 });
+  });
 });
