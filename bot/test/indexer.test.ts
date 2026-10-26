@@ -1,8 +1,8 @@
 import { keccak256, toHex, type Abi, type Hex } from "viem";
 import { describe, expect, it } from "vitest";
-import { NoxCreditsAbi, NoxGameAbi } from "../src/chain/contracts.js";
-import { EventIndexer, EventStore, MAX_BLOCK_RANGE, reconcileCredits } from "../src/chain/indexer.js";
-import { ava, ben, CREDITS, cy, FakeChain, GAME, game, gameId, minted, playGame } from "./chain-fakes.js";
+import { NoxCreditsAbi, NoxGameAbi, NoxPaymentsAbi } from "../src/chain/contracts.js";
+import { EventIndexer, EventStore, MAX_BLOCK_RANGE, reconcileCredits, reconcilePayments } from "../src/chain/indexer.js";
+import { ava, ben, CREDITS, cy, FakeChain, GAME, game, gameId, minted, pay, PAYMENTS, playGame } from "./chain-fakes.js";
 
 function setup(fromBlock = 100n) {
   const chain = new FakeChain();
@@ -177,5 +177,40 @@ describe("event indexer", () => {
       expect(bad.mismatches).toEqual([{ account: cy, indexed: "30", onChain: "31" }]);
       expect(store.lastReconciliation()).toMatchObject({ checked: 3, mismatches: [{ account: cy }] });
     });
+  });
+
+  it("keeps the agent revenue and treasury ledger, and reconciles it with NoxPayments (F18-D05)", async () => {
+    const chain = new FakeChain();
+    const store = new EventStore(":memory:");
+    const indexer = new EventIndexer({ client: chain, store, contracts: [{ name: "NoxPayments", address: PAYMENTS, abi: NoxPaymentsAbi as Abi }], fromBlock: 100n, confirmations: 0n });
+    const QIE = "0x0000000000000000000000000000000000000000";
+    const e18 = 10n ** 18n;
+    chain.logs.push(
+      pay("PassPurchased", { buyer: ava, passType: 1, periods: 2, token: QIE, amount: 2n * e18, expiresAt: 1n }, 110n),
+      // Game Night with agent 7: 1 QIE, 30% to its owner Ben.
+      pay("AgentCredited", { agentId: 7n, owner: ben, token: QIE, amount: 3n * 10n ** 17n }, 120n, 0),
+      pay("GameNightPaid", { bookingId: keccak256(toHex("b1")), payer: cy, agentId: 7n, token: QIE, amount: e18, ownerShare: 3n * 10n ** 17n }, 120n, 1),
+      // Monthly pool: 0.5 QIE to agent 7.
+      pay("AgentCredited", { agentId: 7n, owner: ben, token: QIE, amount: 5n * 10n ** 17n }, 130n, 0),
+      pay("AgentPoolAllocated", { period: 202610, token: QIE, total: 5n * 10n ** 17n, usageRoot: keccak256(toHex("u")) }, 130n, 1),
+      pay("Withdrawn", { account: ben, token: QIE, amount: 3n * 10n ** 17n }, 140n),
+    );
+    // Events of one transaction share its hash, as on a real chain (the fake gives each log its own).
+    for (const b of [120n, 130n]) {
+      const same = chain.logs.filter((x) => x.blockNumber === b);
+      for (const x of same) x.transactionHash = same[0]!.transactionHash;
+    }
+    chain.head = 200n;
+    await indexer.syncOnce();
+    const l = store.paymentLedger();
+    expect(l.agents).toEqual([{ agentId: 7, owner: ben, token: QIE, gameNights: 3n * 10n ** 17n, pool: 5n * 10n ** 17n, total: 8n * 10n ** 17n }]);
+    expect(l.owners).toEqual([{ owner: ben, token: QIE, credited: 8n * 10n ** 17n, withdrawn: 3n * 10n ** 17n, owed: 5n * 10n ** 17n }]);
+    expect(l.treasury).toEqual([{ token: QIE, passes: 2n * e18, gameNights: 7n * 10n ** 17n, pool: 5n * 10n ** 17n, withdrawn: 0n, balance: 22n * 10n ** 17n }]);
+
+    const good = await reconcilePayments(store, { ownerBalance: async () => 5n * 10n ** 17n, treasuryBalance: async () => 22n * 10n ** 17n });
+    expect(good).toMatchObject({ checked: 2, mismatches: [], block: 200 });
+    const bad = await reconcilePayments(store, { ownerBalance: async () => 8n * 10n ** 17n, treasuryBalance: async () => 22n * 10n ** 17n });
+    expect(bad.mismatches).toEqual([{ kind: "owner", owner: ben, token: QIE, indexed: "500000000000000000", onChain: "800000000000000000" }]);
+    expect(store.lastPaymentReconciliation()!.mismatches).toHaveLength(1);
   });
 });

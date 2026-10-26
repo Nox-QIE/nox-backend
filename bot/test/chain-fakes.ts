@@ -1,10 +1,11 @@
 import { encodeAbiParameters, encodeEventTopics, keccak256, toHex, type Abi, type Address, type Hex } from "viem";
-import { NoxCreditsAbi, NoxGameAbi } from "../src/chain/contracts.js";
+import { NoxCreditsAbi, NoxGameAbi, NoxPaymentsAbi } from "../src/chain/contracts.js";
 import type { IndexerClient, RawLog } from "../src/chain/indexer.js";
 
 /** A fake chain that answers like a node, with logs built from the real ABIs (indexer and API tests). */
 export const GAME: Address = "0x00000000000000000000000000000000000000a1";
 export const CREDITS: Address = "0x00000000000000000000000000000000000000c2";
+export const PAYMENTS: Address = "0x00000000000000000000000000000000000000d3";
 export const gameId = keccak256(toHex("game-1"));
 export const ava: Address = "0x1111111111111111111111111111111111111111";
 export const ben: Address = "0x2222222222222222222222222222222222222222";
@@ -68,3 +69,5 @@ export function playGame(chain: FakeChain, at: bigint) {
     minted(cy, 30n, at + 4n, 6),
   );
 }
+
+export const pay = (name: string, args: Record<string, unknown>, block: bigint, i = 0) => log(PAYMENTS, NoxPaymentsAbi as Abi, name, args, block, i);

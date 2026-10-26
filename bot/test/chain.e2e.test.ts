@@ -12,7 +12,7 @@ import {
   NoxPaymentsAbi,
   NoxPaymentsBytecode,
 } from "../src/chain/contracts.js";
-import { EventIndexer, EventStore, reconcileCredits, type IndexerClient } from "../src/chain/indexer.js";
+import { EventIndexer, EventStore, reconcileCredits, reconcilePayments, type IndexerClient } from "../src/chain/indexer.js";
 import { operatorFrom, registerAgentOnChain } from "../src/chain/operator.js";
 import { settleMonth } from "../src/chain/settle.js";
 import { gasLimitFor, rpcTransport, ViemLedger, type PlayerReward, type TxRecord } from "../src/chain/viem-ledger.js";
@@ -318,6 +318,31 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     expect(owed).toBe(9n * 10n ** 17n);
     // Settling the same month again is refused by the contract.
     await expect(settleMonth(store, op, { registry, payments }, month, "0x0000000000000000000000000000000000000000", true)).rejects.toThrow();
+
+    // A Game Night booked with the agent credits its owner 30% at payment time.
+    const NATIVE = "0x0000000000000000000000000000000000000000" as const;
+    const chainAgentId = BigInt(store.getAgent(agentId)!.chainAgentId!);
+    await publicClient.waitForTransactionReceipt({
+      hash: await hostWallet.writeContract({ address: payments, abi: NoxPaymentsAbi, functionName: "payGameNight", args: [("0x" + "b0".repeat(32)) as Hex, chainAgentId, NATIVE, 2n * 10n ** 18n], value: 2n * 10n ** 18n }),
+    });
+
+    // Revenue ledger from the events (F18-D05), reconciled with the contract at the indexed block.
+    const index = new EventStore(":memory:");
+    await new EventIndexer({
+      client: publicClient as unknown as IndexerClient,
+      store: index,
+      contracts: [{ name: "NoxPayments", address: payments, abi: NoxPaymentsAbi as Abi }],
+      fromBlock: 0n,
+      confirmations: 0n,
+    }).syncOnce();
+    const ledger = index.paymentLedger();
+    expect(ledger.agents).toEqual([{ agentId: Number(chainAgentId), owner, token: NATIVE, gameNights: 6n * 10n ** 17n, pool: 9n * 10n ** 17n, total: 15n * 10n ** 17n }]);
+    expect(ledger.treasury).toEqual([{ token: NATIVE, passes: 4n * 10n ** 18n, gameNights: 14n * 10n ** 17n, pool: 9n * 10n ** 17n, withdrawn: 0n, balance: 45n * 10n ** 17n }]);
+    const rec = await reconcilePayments(index, {
+      ownerBalance: (o, t, blockNumber) => publicClient.readContract({ address: payments, abi: NoxPaymentsAbi, functionName: "ownerBalance", args: [o, t], blockNumber }),
+      treasuryBalance: (t, blockNumber) => publicClient.readContract({ address: payments, abi: NoxPaymentsAbi, functionName: "treasuryBalance", args: [t], blockNumber }),
+    });
+    expect(rec).toMatchObject({ checked: 2, mismatches: [] });
   }, 60_000);
 
   it("does not trust a node that underestimates gas (QIE testnet answered 22088 for createGame)", async () => {

@@ -9,7 +9,7 @@ import { createPublicClient, type Abi } from "viem";
 import { createApi } from "../src/api.js";
 import { loadIndexerConfig } from "../src/config.js";
 import { NoxAgentRegistryAbi, NoxCreditsAbi, NoxGameAbi, NoxPaymentsAbi } from "../src/chain/contracts.js";
-import { EventIndexer, EventStore, reconcileCredits, type IndexedContract, type IndexerClient } from "../src/chain/indexer.js";
+import { EventIndexer, EventStore, reconcileCredits, reconcilePayments, type IndexedContract, type IndexerClient } from "../src/chain/indexer.js";
 import { chainFor, rpcTransport } from "../src/chain/viem-ledger.js";
 
 const c = loadIndexerConfig();
@@ -35,6 +35,14 @@ const reconcile = async () => {
   const r = await reconcileCredits(store, balanceAt);
   const bad = r.mismatches.length > 0 || r.orphanMints > 0;
   log({ event: bad ? "credits_mismatch" : "credits_reconciled", block: r.block, checked: r.checked, mismatches: r.mismatches, orphanMints: r.orphanMints });
+  const payments = c.paymentsAddress;
+  if (payments) {
+    const p = await reconcilePayments(store, {
+      ownerBalance: (owner, token, blockNumber) => client.readContract({ address: payments, abi: NoxPaymentsAbi, functionName: "ownerBalance", args: [owner, token], blockNumber }),
+      treasuryBalance: (token, blockNumber) => client.readContract({ address: payments, abi: NoxPaymentsAbi, functionName: "treasuryBalance", args: [token], blockNumber }),
+    });
+    log({ event: p.mismatches.length ? "payments_mismatch" : "payments_reconciled", block: p.block, checked: p.checked, mismatches: p.mismatches });
+  }
 };
 
 if (process.argv.includes("--once")) {

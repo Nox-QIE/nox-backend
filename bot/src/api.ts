@@ -56,7 +56,14 @@ export function createApi(o: ApiOptions): Server {
     if (rest.length) throw new HttpError(404, "not found");
     switch (resource) {
       case "health":
-        return { ok: true, network: o.network, chainId: o.chainId, indexedBlock: store.indexedBlock(), reconciliation: store.lastReconciliation() };
+        return {
+          ok: true,
+          network: o.network,
+          chainId: o.chainId,
+          indexedBlock: store.indexedBlock(),
+          reconciliation: store.lastReconciliation(),
+          paymentsReconciliation: store.lastPaymentReconciliation(),
+        };
       case "stats":
         if (id) break;
         return { ...store.stats(), indexedBlock: store.indexedBlock() };
@@ -81,6 +88,13 @@ export function createApi(o: ApiOptions): Server {
         const game = store.game(id as Hex);
         if (!game) throw new HttpError(404, "game not indexed (yet)");
         return { game, events: store.eventsOfGame(id as Hex) };
+      }
+      case "agents": {
+        // Agent Marketplace revenue, public on chain: per agent, owner and token (amounts in wei, as strings).
+        if (id !== "revenue") break;
+        const { agents, owners } = store.paymentLedger();
+        const str = <T extends object>(x: T) => Object.fromEntries(Object.entries(x).map(([k, v]) => [k, typeof v === "bigint" ? v.toString() : v]));
+        return { agents: agents.map(str), owners: owners.map(str) };
       }
       case "players":
         if (!id || !ADDRESS.test(id)) throw new HttpError(400, "address must be 0x + 40 hex characters");
