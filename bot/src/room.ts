@@ -427,6 +427,8 @@ export class GameRoom {
   vote(userId: number, round: number, targetId: string): Promise<Reply> {
     return this.run(async () => {
       if (this.isStale("vote", round)) return { ok: false, text: this.t.stale };
+      // The vote buttons are one group message for everyone, so a player also sees their own name.
+      if (targetId === String(userId)) return { ok: false, text: this.t.noSelfVote };
       try {
         this.exec({ type: "vote", voter: String(userId), target: targetId });
       } catch (e) {

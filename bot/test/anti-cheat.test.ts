@@ -221,4 +221,13 @@ describe("anti-cheat: werewolf chat", () => {
     await toDayOneVote(s);
     expect(await s.room.wolfChat(s.wolf, "day chat")).toBe(false); // not at night
   });
+
+  it("refuses a vote for yourself, off chain and on, and keeps your real vote open", async () => {
+    const s = await started();
+    await toDayOneVote(s);
+    const before = s.ledger.calls.length;
+    expect(await s.room.vote(s.wolf!, 1, String(s.wolf))).toEqual({ ok: false, text: "You cannot vote for yourself." });
+    expect(s.ledger.calls.slice(before)).toEqual([]); // nothing went to the chain
+    expect((await s.room.vote(s.wolf!, 1, String(s.seer))).ok).toBe(true);
+  });
 });
