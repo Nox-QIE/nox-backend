@@ -15,7 +15,8 @@
     "gas:report": "node --env-file=.env --import tsx bot/scripts/gas-report.ts",
     "report": "node --env-file=.env --import tsx bot/scripts/report.ts",
     "backup": "node --env-file=.env --import tsx bot/scripts/backup.ts",
-    "ops:report": "node --env-file=.env --import tsx bot/scripts/ops-report.ts"
+    "ops:report": "node --env-file=.env --import tsx bot/scripts/ops-report.ts",
+    "reconcile:txs": "node --env-file=.env --import tsx bot/scripts/reconcile-txs.ts"
   },
   "devDependencies": {
     "typescript": "5.9",

@@ -4,7 +4,8 @@
  * player ids 990001-990005, whose wallets are derived from NOX_WALLET_SECRET and funded by the
  * gas drip. Spends a little real QIE on testnet/mainnet.
  *   npm run sim:game
- *   npm run sim:game -- --scamshield   (Scam Shield mode: a group win awards Scam Spotter on NoxBadges)
+ *   npm run sim:game -- --scamshield
+ *   npm run sim:game -- --db <file>     (keep the tx ledger, e.g. for npm run reconcile:txs)   (Scam Shield mode: a group win awards Scam Spotter on NoxBadges)
  */
 import { installLogRedaction, secretsFrom } from "../src/redact.js";
 import { buildLedger } from "../src/telegram.js";
@@ -26,8 +27,10 @@ const chain = loadChainConfig();
 if (chain.network === "off") throw new Error("set NOX_CHAIN in .env");
 const logs: Record<string, unknown>[] = [];
 const rewards: PlayerReward[] = [];
-// The ledger's records go to an in-memory store, so the run can print its gas & transaction ledger.
-const store = new SqliteStore(":memory:");
+// The ledger's records go to an in-memory store (or the file after --db, to keep them for
+// reconcile:txs), so the run can print its gas & transaction ledger.
+const dbArg = process.argv.indexOf("--db");
+const store = new SqliteStore(dbArg > 0 && process.argv[dbArg + 1] ? process.argv[dbArg + 1]! : ":memory:");
 const ledger = buildLedger(
   chain,
   (l) => {
