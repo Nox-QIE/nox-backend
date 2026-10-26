@@ -47,7 +47,8 @@ export class FakeChain implements IndexerClient {
 }
 
 export const game = (name: string, args: Record<string, unknown>, block: bigint, i = 0) => log(GAME, NoxGameAbi as Abi, name, args, block, i);
-export const minted = (to: Address, amount: bigint, block: bigint, i = 0) => log(CREDITS, NoxCreditsAbi as Abi, "CreditsMinted", { to, amount, gameId }, block, i);
+export const minted = (to: Address, amount: bigint, block: bigint, i = 0, game: Hex = gameId) =>
+  log(CREDITS, NoxCreditsAbi as Abi, "CreditsMinted", { to, amount, gameId: game }, block, i);
 
 /** One finished 3-player game: Ava is the werewolf and loses, the village wins. */
 export function playGame(chain: FakeChain, at: bigint) {

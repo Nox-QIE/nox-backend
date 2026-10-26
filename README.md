@@ -18,6 +18,8 @@ Memakai [`nox-shared`](https://github.com/Nox-QIE/nox-shared) untuk aturan game,
 - Berhenti `NOX_INDEX_CONFIRMATIONS` blok di belakang head (default 2) dan menyimpan hash blok checkpoint; bila hash berubah (reorg), mundur 64 blok dan memindai ulang.
 - Event unik per `(tx_hash, log_index)`, jadi menjalankan ulang tidak menggandakan data. Database bisa dihapus dan dibangun ulang dari chain.
 - `npm run indexer -- --once` mengejar sekali lalu mencetak statistik.
+- Setelah tiap sync yang menyimpan event (dan tiap jam, karena streak bisa putus seiring waktu) tabel `player_stats` (cermin D7: credits, game, menang, streak, rank) dibangun ulang.
+- Tiap `NOX_RECONCILE_MINUTES` credits terindeks dicocokkan dengan `NoxCredits.balanceOf` **di blok terindeks**; selisih atau mint untuk game yang tidak pernah finalize dicatat sebagai `credits_mismatch`.
 
 | Variabel | Default | Arti |
 |---|---|---|
@@ -25,6 +27,7 @@ Memakai [`nox-shared`](https://github.com/Nox-QIE/nox-shared) untuk aturan game,
 | `NOX_INDEX_CONFIRMATIONS` | 2 | Jarak aman dari head |
 | `NOX_INDEX_POLL_SECONDS` | 10 | Jeda antar putaran |
 | `NOX_INDEX_DB_PATH` | `data/index.db` | File SQLite indeks |
+| `NOX_RECONCILE_MINUTES` | 60 | Jeda rekonsiliasi credits (`off` untuk mematikan) |
 
 ## API publik read-only
 
@@ -32,9 +35,9 @@ Memakai [`nox-shared`](https://github.com/Nox-QIE/nox-shared) untuk aturan game,
 
 | Endpoint | Isi |
 |---|---|
-| `GET /v1/health` | Jaringan, chain id, blok terakhir yang terindeks |
+| `GET /v1/health` | Jaringan, chain id, blok terakhir yang terindeks, hasil rekonsiliasi credits terakhir |
 | `GET /v1/stats` | Wallet pemain unik, tx yang ditandatangani pemain, game selesai/batal, total credits |
-| `GET /v1/leaderboard?limit=50` | Peringkat credits + game + menang (maks 200) |
+| `GET /v1/leaderboard?limit=50&season=2026-10` | Peringkat dari cermin D7: credits, game, menang, streak, rank (maks 200); `season` = bulan UTC |
 | `GET /v1/games?limit=20&before=<blok>` | Game terbaru dulu, dengan status & pemenang (maks 100) |
 | `GET /v1/games/<gameId>` | Ringkasan satu game + semua event-nya |
 | `GET /v1/players/<address>` | Credits, game, menang, tx ditandatangani, riwayat peran |
