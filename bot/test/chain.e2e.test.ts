@@ -326,6 +326,86 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     expect(gasLimitFor("revealAndFinalize", 1_500_000n)).toBe(1_875_000n);
   }, 60_000);
 
+  it("retries through a flaky node without creating twice or dripping twice", async () => {
+    // Forwards to anvil, but the 1st raw transaction never reaches the chain and the 2nd and 3rd
+    // reach it while their responses get lost (like an RPC that times out after broadcasting).
+    const base = http(RPC)({ chain });
+    let sends = 0;
+    const flaky = custom(
+      {
+        async request({ method, params }) {
+          if (method !== "eth_sendRawTransaction") return base.request({ method, params } as never);
+          sends++;
+          if (sends === 1) throw new Error("fetch failed (dropped before broadcast)");
+          const result = await base.request({ method, params } as never);
+          if (sends === 2 || sends === 3) throw new Error("fetch failed (response lost)");
+          return result;
+        },
+      },
+      { retryCount: 0 },
+    );
+    const logs: Record<string, unknown>[] = [];
+    const wallets = new PlayerWallets(Uint8Array.from({ length: 32 }, (_, i) => 200 + i));
+    const dripAmount = 10n ** 16n;
+    const ledger = new ViemLedger({
+      chain,
+      gameAddress,
+      operatorKey: OPERATOR_KEY,
+      wallets,
+      minBalance: 10n ** 15n,
+      dripAmount,
+      pollingMs: 50,
+      retryDelayMs: 10,
+      transport: flaky,
+      log: (l) => logs.push(l),
+    });
+    const users = [701, 702, 703, 704, 705];
+    const gameId = ("0x" + "88".repeat(32)) as Hex;
+    const { commitRoles } = await import("@nox/shared/crypto-spec");
+    const roles = users.map((u, i) => ({ player: wallets.address(u), role: (i === 0 ? "werewolf" : i === 1 ? "seer" : i === 2 ? "doctor" : "villager") as never }));
+    ledger.startGame(gameId, ("0x" + "00".repeat(32)) as Hex, users, commitRoles(gameId, roles).root);
+    await ledger.idle();
+
+    expect(logs.filter((l) => l.event === "chain_error")).toEqual([]);
+    expect(logs.filter((l) => l.event === "chain_retry").length).toBeGreaterThanOrEqual(3);
+    // createGame's second copy landed; the third try saw AlreadyExists and took it as done.
+    expect(logs).toContainEqual({ event: "chain_retry_done", what: "createGame", attempt: 3 });
+    // The drip whose response was lost was not sent again: nobody holds two drips.
+    expect(logs).toContainEqual({ event: "chain_retry_done", what: "gas drip", attempt: 2 });
+    for (const u of users) expect(await publicClient.getBalance({ address: wallets.address(u) })).toBeLessThan(dripAmount);
+    expect(await ledger.statusOf(gameId)).toBe(2); // Running: create, 5 joins and commitRoles all landed
+  }, 60_000);
+
+  it("gives up after three tries and cancels the game", async () => {
+    const base = http(RPC)({ chain });
+    const down = custom(
+      {
+        async request({ method, params }) {
+          if (method === "eth_sendRawTransaction") throw new Error("fetch failed (node down)");
+          return base.request({ method, params } as never);
+        },
+      },
+      { retryCount: 0 },
+    );
+    const logs: Record<string, unknown>[] = [];
+    const ledger = new ViemLedger({
+      chain,
+      gameAddress,
+      operatorKey: OPERATOR_KEY,
+      wallets: new PlayerWallets(Uint8Array.from({ length: 32 }, (_, i) => 230 + i)),
+      minBalance: 10n ** 15n,
+      dripAmount: 10n ** 16n,
+      pollingMs: 50,
+      retryDelayMs: 10,
+      transport: down,
+      log: (l) => logs.push(l),
+    });
+    ledger.startGame(("0x" + "99".repeat(32)) as Hex, ("0x" + "00".repeat(32)) as Hex, [801, 802, 803, 804, 805], ("0x" + "11".repeat(32)) as Hex);
+    await ledger.idle();
+    expect(logs.filter((l) => l.event === "chain_retry" && l.what === "createGame")).toHaveLength(2);
+    expect(logs.filter((l) => l.event === "chain_error").map((l) => l.step)).toEqual(["start", "cancel"]);
+  }, 60_000);
+
   it("indexes every game event and its credits match NoxCredits.balanceOf for each player", async () => {
     const store = new EventStore(":memory:");
     const indexer = new EventIndexer({
