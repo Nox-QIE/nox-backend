@@ -168,3 +168,46 @@ export function loadChainConfig(env: NodeJS.ProcessEnv = process.env): ChainConf
   c.walletSecret = env.NOX_WALLET_SECRET;
   return c;
 }
+
+export interface IndexerConfig {
+  network: "local" | "testnet" | "mainnet";
+  rpcUrl?: string;
+  gameAddress: `0x${string}`;
+  agentRegistryAddress?: `0x${string}`;
+  paymentsAddress?: `0x${string}`;
+  /** Deploy block: where the first scan starts. */
+  fromBlock: bigint;
+  confirmations: bigint;
+  dbPath: string;
+  pollMs: number;
+}
+
+/** The indexer only reads public chain data, so it needs no operator key or wallet secret. */
+export function loadIndexerConfig(env: NodeJS.ProcessEnv = process.env): IndexerConfig {
+  const network = env.NOX_CHAIN;
+  if (network !== "local" && network !== "testnet" && network !== "mainnet") throw new Error('NOX_CHAIN must be "local", "testnet" or "mainnet" for the indexer');
+  const address = (key: string) => {
+    const v = env[key];
+    if (v && !/^0x[0-9a-fA-F]{40}$/.test(v)) throw new Error(`${key} must be a contract address`);
+    return v as `0x${string}` | undefined;
+  };
+  const gameAddress = address("NOX_GAME_ADDRESS");
+  if (!gameAddress) throw new Error("NOX_GAME_ADDRESS must be the deployed NoxGame address");
+  const confirmations = Number(env.NOX_INDEX_CONFIRMATIONS ?? 2);
+  if (!Number.isInteger(confirmations) || confirmations < 0) throw new Error("NOX_INDEX_CONFIRMATIONS must be a whole number ≥ 0");
+  const c: IndexerConfig = {
+    network,
+    gameAddress,
+    fromBlock: BigInt(env.NOX_INDEX_FROM_BLOCK || env.NOX_PAYMENTS_FROM_BLOCK || 0),
+    confirmations: BigInt(confirmations),
+    dbPath: env.NOX_INDEX_DB_PATH || "data/index.db",
+    pollMs: seconds(env, "NOX_INDEX_POLL_SECONDS", 10_000),
+  };
+  const registry = address("NOX_AGENT_REGISTRY_ADDRESS");
+  const payments = address("NOX_PAYMENTS_ADDRESS");
+  if (registry) c.agentRegistryAddress = registry;
+  if (payments) c.paymentsAddress = payments;
+  if (env.NOX_RPC_URL) c.rpcUrl = env.NOX_RPC_URL;
+  else if (network === "local") c.rpcUrl = "http://127.0.0.1:8545";
+  return c;
+}
