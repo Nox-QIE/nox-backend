@@ -40,3 +40,26 @@ export function checkPersona(p: Persona): string[] {
 
 /** Owner payout wallet must be an EVM address. */
 export const isAddress = (s: string) => /^0x[0-9a-fA-F]{40}$/.test(s);
+
+/** Automatic suspension rules (F18-S11), over an agent's most recent games. */
+export const HEALTH = { window: 10, maxDemotedGames: 3, minGamesForShare: 5, minPersonaShare: 0.5 } as const;
+
+/**
+ * Why an agent should be suspended now, or null. `recent` is newest first. A persona is set aside
+ * in a game after repeated guard rejections; doing that in several recent games, or leaving most
+ * lines to Nox's own voice or the template, means players are not getting the agent they picked.
+ */
+export function suspensionReason(recent: { persona: number; nox: number; template: number; demoted: boolean }[]): string | null {
+  const games = recent.slice(0, HEALTH.window);
+  const demoted = games.filter((g) => g.demoted).length;
+  if (demoted >= HEALTH.maxDemotedGames) return `persona set aside in ${demoted} of the last ${games.length} games (guard rejections)`;
+  if (games.length >= HEALTH.minGamesForShare) {
+    // Template-only beats mean every voice failed (a provider outage), which is not the agent's doing.
+    const beats = games.reduce((n, g) => n + g.persona + g.nox, 0);
+    const own = games.reduce((n, g) => n + g.persona, 0);
+    if (beats > 0 && own / beats < HEALTH.minPersonaShare) {
+      return `persona wrote ${Math.round((100 * own) / beats)}% of the lines in the last ${games.length} games (minimum ${HEALTH.minPersonaShare * 100}%)`;
+    }
+  }
+  return null;
+}

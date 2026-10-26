@@ -2,13 +2,14 @@
  * Operator CLI for the Agent Marketplace (hosted personas). Runs against the bot's SQLite store.
  *   node --env-file=.env --import tsx bot/scripts/agents.ts add <owner-wallet> <persona.json>
  *   node --env-file=.env --import tsx bot/scripts/agents.ts list
- *   node --env-file=.env --import tsx bot/scripts/agents.ts suspend|activate <id>
+ *   node --env-file=.env --import tsx bot/scripts/agents.ts suspend|activate <id> "<reason>"
+ *   node --env-file=.env --import tsx bot/scripts/agents.ts log <id>       (moderation log + recent health)
  *   node --env-file=.env --import tsx bot/scripts/agents.ts usage <YYYY-MM>
  *   node --env-file=.env --import tsx bot/scripts/agents.ts register <id>   (NoxAgentRegistry, operator key)
  * `add` runs the automatic persona checks; review the text yourself before adding (moderation).
  */
 import { readFileSync } from "node:fs";
-import { checkPersona, isAddress, type Persona } from "../src/agents.js";
+import { checkPersona, HEALTH, isAddress, type Persona } from "../src/agents.js";
 import { operatorFrom, registerAgentOnChain } from "../src/chain/operator.js";
 import { loadChainConfig } from "../src/config.js";
 import { SqliteStore } from "../src/store.js";
@@ -34,10 +35,28 @@ switch (cmd) {
     }
     break;
   case "suspend":
-  case "activate":
+  case "activate": {
+    // Every decision is kept with its reason (F18-D06), so owners can be told why.
+    if (!a || !store.getAgent(Number(a))) throw new Error(`usage: ${cmd} <id> "<reason>" (unknown agent ${a ?? ""})`);
+    if (!b?.trim()) throw new Error(`usage: ${cmd} <id> "<reason>": a reason is required`);
     store.setAgentStatus(Number(a), cmd === "suspend" ? "suspended" : "active");
-    console.log(`Agent #${a} ${cmd === "suspend" ? "suspended" : "active"}.`);
+    store.addModeration(Number(a), cmd === "suspend" ? "suspended" : "activated", b.trim(), process.env.USER || "operator");
+    console.log(`Agent #${a} ${cmd === "suspend" ? "suspended" : "active"}: ${b.trim()}`);
     break;
+  }
+  case "log": {
+    const id = Number(a);
+    const agent = store.getAgent(id);
+    if (!agent) throw new Error(`unknown agent ${a ?? ""}`);
+    console.log(`#${id} ${agent.persona.name}: ${agent.status}`);
+    for (const m of store.moderationLog(id)) console.log(`  ${new Date(m.at).toISOString()}  ${m.decision.padEnd(9)} by ${m.by}: ${m.reason}`);
+    const games = store.agentGames(id, HEALTH.window);
+    if (games.length) {
+      const sum = (k: "persona" | "nox" | "template") => games.reduce((n, g) => n + g[k], 0);
+      console.log(`  last ${games.length} games: persona ${sum("persona")} / Nox ${sum("nox")} / template ${sum("template")} beats, set aside in ${games.filter((g) => g.demoted).length}`);
+    }
+    break;
+  }
   case "usage": {
     const m = /^(\d{4})-(\d{2})$/.exec(a ?? "");
     if (!m) throw new Error("usage: usage <YYYY-MM>");

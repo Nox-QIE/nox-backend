@@ -12,7 +12,19 @@ export interface Narrator {
   dayResult(view: PublicView, eliminated: string | null, revealedRole: Role | null): Promise<string>;
   gameOver(winner: Team, roster: { name: string; role: Role }[]): Promise<string>;
   /** Called once when the game ends or is cancelled (e.g. to report LLM usage). */
-  finish?(): void;
+  finish?(): NarratorReport | void;
+}
+
+/** How a persona behaved in one game, for agent health checks (F18-S11). */
+export interface NarratorReport {
+  /** Beats written by the persona, by Nox's own voice, and by the template alone. */
+  persona: number;
+  nox: number;
+  template: number;
+  /** Persona lines the guard rejected. */
+  rejected: number;
+  /** The persona was set aside during the game. */
+  demoted: boolean;
 }
 
 /**

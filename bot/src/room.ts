@@ -18,7 +18,7 @@ import { noLedger, type GameLedger, type LedgerNightReveal } from "./chain/ledge
 import { esc, roleName, T, type Lang } from "./i18n.js";
 import type { AgentRecord, Persona } from "./agents.js";
 import { safeName } from "./names.js";
-import type { Narrator, Wording } from "./narrator.js";
+import type { Narrator, NarratorReport, Wording } from "./narrator.js";
 import type { Scenario, ScenarioText } from "./scenarios.js";
 import type { Keyboard, Messenger, Scheduler, Timings } from "./ports.js";
 import type { Store } from "./store.js";
@@ -44,6 +44,8 @@ export interface RoomDeps {
   store?: Store;
   /** Public dashboard (nox-frontend). When set, the game-over message links to the game's proof page. */
   webUrl?: string;
+  /** A finished game narrated by a Marketplace agent: how its persona behaved (F18-S11). */
+  onAgentGame?: (agentId: number, report: NarratorReport) => void;
 }
 
 export interface Reply {
@@ -420,7 +422,8 @@ export class GameRoom {
         for (const a of this.assignments) if (a.role !== "werewolf") await this.deps.messenger.sendDM(Number(a.id), this.sc.spotterBadge);
       }
     }
-    this.narrator.finish?.();
+    const report = this.narrator.finish?.();
+    if (report && agentId !== null) this.deps.onAgentGame?.(agentId, report);
     this.deps.onClosed(this);
     return true;
   }

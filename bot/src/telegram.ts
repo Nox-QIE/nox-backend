@@ -1,7 +1,7 @@
 import { Bot, GrammyError, InlineKeyboard } from "grammy";
 import { randomInt } from "node:crypto";
 import type { Hex } from "viem";
-import { langFrom, T } from "./i18n.js";
+import { esc, langFrom, T } from "./i18n.js";
 import { noLedger, type GameLedger } from "./chain/ledger.js";
 import { chainFor, ViemLedger, type PlayerReward, type ViemLedgerOptions } from "./chain/viem-ledger.js";
 import { qie, TreasuryWatch } from "./treasury.js";
@@ -13,8 +13,8 @@ import { SqliteStore, storeKey, type Store } from "./store.js";
 import { createGmModel } from "./gm/model.js";
 import { GmModelPool } from "./gm/pool.js";
 import { LlmNarrator } from "./gm/llm-narrator.js";
-import type { Persona } from "./agents.js";
-import { TemplateNarrator, type Narrator, type Wording } from "./narrator.js";
+import { HEALTH, suspensionReason, type Persona } from "./agents.js";
+import { TemplateNarrator, type Narrator, type NarratorReport, type Wording } from "./narrator.js";
 import { realScheduler, type Keyboard, type Messenger } from "./ports.js";
 import { Registry } from "./registry.js";
 import { scenarioFrom } from "./scenarios.js";
@@ -182,6 +182,29 @@ export async function sendRewardDms(a: { messenger: Messenger; store: Store; gam
   for (const r of a.rewards) await a.messenger.sendDM(r.userId, T[lang].rewardDm(r));
 }
 
+/**
+ * After a game narrated by a Marketplace agent: keep its health record and suspend it automatically
+ * when it keeps failing (F18-S11), with a moderation note (F18-D06), a log line and an operator DM.
+ */
+export function onAgentGame(a: { store: Store; messenger: Messenger; operatorChatId?: number; log?: (l: Record<string, unknown>) => void }) {
+  const log = a.log ?? logLine;
+  return (agentId: number, report: NarratorReport) => {
+    a.store.recordAgentGame(agentId, report);
+    const agent = a.store.getAgent(agentId);
+    if (!agent || agent.status !== "active") return;
+    const reason = suspensionReason(a.store.agentGames(agentId, HEALTH.window));
+    if (!reason) return;
+    a.store.setAgentStatus(agentId, "suspended");
+    a.store.addModeration(agentId, "suspended", reason, "auto");
+    log({ event: "agent_suspended", agentId, reason });
+    if (a.operatorChatId) {
+      void a.messenger
+        .sendDM(a.operatorChatId, `⛔ <b>Agent #${agentId} "${esc(agent.persona.name)}" suspended automatically</b>\nReason: ${esc(reason)}\nReview it, then: agents.ts activate ${agentId} "<reason>"`)
+        .catch((e) => log({ event: "agent_alert_error", agentId, error: e instanceof Error ? e.message : String(e) }));
+    }
+  };
+}
+
 /** Wire Telegram updates to the registry. Nox stays a regular bot: no Mini App / Web App buttons. */
 export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, timings, gm, chain, rateLimit }: Config) {
   const bot = new Bot(botToken);
@@ -207,6 +230,7 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, t
     ledger,
     store,
     ...(webUrl ? { webUrl } : {}),
+    onAgentGame: onAgentGame({ store, messenger, ...(operatorChatId ? { operatorChatId } : {}) }),
   });
   await recoverGames(store, ledger, messenger, logLine);
 
