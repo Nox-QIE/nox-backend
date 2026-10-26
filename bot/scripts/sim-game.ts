@@ -5,6 +5,7 @@
  * gas drip. Spends a little real QIE on testnet/mainnet.
  *   npm run sim:game
  */
+import { installLogRedaction, secretsFrom } from "../src/redact.js";
 import { buildLedger } from "../src/telegram.js";
 import { loadChainConfig } from "../src/config.js";
 import type { PlayerReward, ViemLedger } from "../src/chain/viem-ledger.js";
@@ -13,6 +14,9 @@ import type { Messenger, Scheduler } from "../src/ports.js";
 import { Registry } from "../src/registry.js";
 import { SqliteStore } from "../src/store.js";
 import { gasReport, qie } from "../src/treasury.js";
+
+// Keys and tokens never reach the output (F11-D04).
+installLogRedaction(secretsFrom(process.env));
 
 const chain = loadChainConfig();
 if (chain.network === "off") throw new Error("set NOX_CHAIN in .env");

@@ -1,4 +1,8 @@
 import { loadConfig } from "./config.js";
+import { installLogRedaction, secretsFrom } from "./redact.js";
+
+// Before anything can log: keys and tokens never reach the output (F11-D04).
+installLogRedaction(secretsFrom(process.env));
 import { createNoxBot } from "./telegram.js";
 import { WEBHOOK_PATH, webhookServer } from "./webhook.js";
 

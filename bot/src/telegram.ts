@@ -339,6 +339,6 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
     if (room) await room.wolfChat(ctx.from.id, ctx.message.text);
   });
 
-  bot.catch((err) => console.error("bot error", err.error));
+  bot.catch((err) => logLine({ event: "bot_error", error: err.error instanceof Error ? err.error.message : String(err.error) }));
   return { bot, registry };
 }

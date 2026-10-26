@@ -4,11 +4,15 @@
  *   node --env-file=.env --import tsx bot/scripts/settle-agents.ts 2026-11 --send     # allocateAgentPool
  *   ... --token 0x<QUSDC>   (default: native QIE)
  */
+import { installLogRedaction, secretsFrom } from "../src/redact.js";
 import { formatUnits, zeroAddress, type Address } from "viem";
 import { operatorFrom } from "../src/chain/operator.js";
 import { settleMonth } from "../src/chain/settle.js";
 import { loadChainConfig } from "../src/config.js";
 import { SqliteStore } from "../src/store.js";
+
+// Keys and tokens never reach the output (F11-D04).
+installLogRedaction(secretsFrom(process.env));
 
 const args = process.argv.slice(2);
 const month = args.find((a) => /^\d{4}-\d{2}$/.test(a));
