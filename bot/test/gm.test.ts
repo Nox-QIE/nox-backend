@@ -128,7 +128,7 @@ describe("full game with the AI Game Master", () => {
     await room.nightAction(wolf, 1, String(victim));
     await scheduler.advance(1000); // night timer
     await scheduler.advance(1000); // discussion → vote
-    for (const u of users.filter((u) => room.isAlive(u))) await room.vote(u, 1, String(wolf));
+    for (const u of users.filter((u) => room.isAlive(u))) await room.vote(u, 1, String(u === wolf ? users.filter((u) => room.isAlive(u)).find((x) => x !== wolf) : wolf)); // no self-votes
     expect(room.status).toBe("ended");
 
     const beats = model.prompts.map((p) => facts(p.user));

@@ -94,7 +94,7 @@ describe("GM nudge for a quiet discussion (F07-S02)", () => {
       await scheduler.advance(500); // nudge
       await scheduler.advance(500); // vote opens
       const wolf = role("werewolf")[0]!;
-      for (const u of USERS.filter((u) => room.isAlive(u))) await room.vote(u, 1, String(wolf));
+      for (const u of USERS.filter((u) => room.isAlive(u))) await room.vote(u, 1, String(u === wolf ? USERS.filter((u) => room.isAlive(u)).find((x) => x !== wolf) : wolf)); // no self-votes
       expect(room.status).toBe("ended");
       expect(store.discussionStats(0, Date.now() + 1)).toEqual(
         canCountMessages

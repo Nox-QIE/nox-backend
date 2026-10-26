@@ -119,7 +119,9 @@ await tap(role("doctor")[0]!, `n:${room.id}:1:${victim}`, { id: role("doctor")[0
 
 // 4. Day 1: once the vote opens, every living player votes for the werewolf.
 await until("the vote", () => sent.some((s) => s.to === "group" && s.buttons.some((b) => b.data.startsWith(`v:${room.id}:1:`))));
-for (const id of players.map((p) => p.id).filter((x) => room.isAlive(x))) await tap(id, `v:${room.id}:1:${wolf}`, groupChat);
+const alive = players.map((p) => p.id).filter((x) => room.isAlive(x));
+// Everyone votes the werewolf; the werewolf (who may not vote for himself) votes someone else.
+for (const id of alive) await tap(id, `v:${room.id}:1:${id === wolf ? alive.find((x) => x !== wolf) : wolf}`, groupChat);
 await until("the end of the game", () => room.status === "ended");
 
 // 5. The chain: the game should be finalized on QIE and each player DMed their credits.
