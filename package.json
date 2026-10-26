@@ -9,7 +9,8 @@
     "test": "vitest run",
     "typecheck": "tsc -p bot --noEmit",
     "dev:bot": "npm run dev -w @nox/bot",
-    "dev:chain": "node --import tsx bot/scripts/dev-chain.ts"
+    "dev:chain": "node --import tsx bot/scripts/dev-chain.ts",
+    "sim:game": "node --env-file=.env --import tsx bot/scripts/sim-game.ts"
   },
   "devDependencies": {
     "typescript": "5.9",
