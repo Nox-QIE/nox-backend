@@ -65,7 +65,7 @@ export class Registry {
     hostName: string,
     lang: Lang,
     /** `privateAgents`: Game Masters only this lobby offers (a client's own theme, F04-S05). */
-    opts: { agentId?: number; scenario?: Scenario; prepaid?: boolean; privateAgents?: AgentRecord[] } = {},
+    opts: { agentId?: number; scenario?: Scenario; prepaid?: boolean; privateAgents?: AgentRecord[]; extendedRoles?: boolean } = {},
   ): Promise<Reply> {
     const t = T[lang];
     if (this.byChat.has(chatId)) return { ok: false, text: t.gameExists };
@@ -95,6 +95,7 @@ export class Registry {
     this.byUser.set(hostId, room.id);
     await room.open();
     if (opts.agentId !== undefined) await room.pickAgent(hostId, opts.agentId);
+    if (opts.extendedRoles) await room.setRoles(hostId, true);
     return { ok: true };
   }
 

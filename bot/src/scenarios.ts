@@ -1,6 +1,6 @@
 import type { Role, Team } from "@nox/shared/engine";
 import type { Persona } from "./gm/prompt.js";
-import type { Lang } from "./i18n.js";
+import { roleName, type Lang } from "./i18n.js";
 import type { Wording } from "./narrator.js";
 
 /**
@@ -10,7 +10,8 @@ import type { Wording } from "./narrator.js";
  */
 export interface ScenarioText {
   title: string;
-  roles: Record<Role, string>;
+  /** Names of the classic roles; scenarios never deal the extended ones. */
+  roles: Record<Exclude<Role, "hunter" | "witch">, string> & Partial<Record<Role, string>>;
   teams: Record<Team, string>;
   wording: Wording;
   /** One warning sign posted each morning, in order. */
@@ -31,8 +32,8 @@ export interface Scenario {
   text: Record<Lang, ScenarioText>;
 }
 
-const ID_ROLES: Record<Role, string> = { werewolf: "🕵️ Penipu", seer: "🔎 Analis Fraud", doctor: "🛡️ Teman Waspada", villager: "📱 Calon Korban" };
-const EN_ROLES: Record<Role, string> = { werewolf: "🕵️ Scammer", seer: "🔎 Fraud Analyst", doctor: "🛡️ Watchful Friend", villager: "📱 Target" };
+const ID_ROLES: ScenarioText["roles"] = { werewolf: "🕵️ Penipu", seer: "🔎 Analis Fraud", doctor: "🛡️ Teman Waspada", villager: "📱 Calon Korban" };
+const EN_ROLES: ScenarioText["roles"] = { werewolf: "🕵️ Scammer", seer: "🔎 Fraud Analyst", doctor: "🛡️ Watchful Friend", villager: "📱 Target" };
 
 export const TASK_SCAM: Scenario = {
   key: "task-scam",
@@ -45,7 +46,7 @@ export const TASK_SCAM: Scenario = {
       roles: ID_ROLES,
       teams: { wolves: "Penipu", village: "Grup yang waspada" },
       wording: {
-        role: (r) => ID_ROLES[r],
+        role: (r) => ID_ROLES[r] ?? roleName("id", r),
         team: (t) => (t === "wolves" ? "Penipu" : "Grup yang waspada"),
         intro: (names) =>
           `🛡️ <b>Scam Shield: Misi Berbayar</b>\n${names.length} anggota baru masuk ke grup "Cuan Harian": ${names.join(", ")}.\nKatanya cukup like dan follow, dibayar per tugas. Di antara kalian ada penipu yang menyamar jadi admin dan anggota. Peran rahasia sudah dikirim lewat DM.`,
@@ -89,7 +90,7 @@ export const TASK_SCAM: Scenario = {
       roles: EN_ROLES,
       teams: { wolves: "Scammers", village: "The alert group" },
       wording: {
-        role: (r) => EN_ROLES[r],
+        role: (r) => EN_ROLES[r] ?? roleName("en", r),
         team: (t) => (t === "wolves" ? "Scammers" : "The alert group"),
         intro: (names) =>
           `🛡️ <b>Scam Shield: Paid Tasks</b>\n${names.length} new members join the "Daily Profit" group: ${names.join(", ")}.\nJust like and follow, paid per task, they say. Scammers posing as admins and members are among you. Secret roles have been sent by DM.`,

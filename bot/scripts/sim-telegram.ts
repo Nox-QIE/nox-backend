@@ -4,7 +4,8 @@
  * buttons themselves. Every call the bot makes to Telegram is intercepted and printed as a
  * transcript; with --chat <id>, the group's messages also go to that real Telegram group so a person
  * can watch the game there (DMs to the simulated players never leave this process).
- *   node --env-file=.env --import tsx bot/scripts/sim-telegram.ts [--scamshield | --theme horor] [--chat -100…] [--lang en] [--out transcript.md]
+ *   node --env-file=.env --import tsx bot/scripts/sim-telegram.ts [--scamshield | --theme horor | --extended] [--chat -100…] [--lang en] [--out transcript.md]
+ * --extended plays 8 players with the hunter and the witch (needs NOX_EXTENDED_ROLES=on and a NoxGame that accepts them).
  * --out writes the whole conversation (every group message and DM, untruncated) as Markdown.
  * Uses BOT_TOKEN, the chain and GM settings from .env, a throwaway store, and short day timers.
  */
@@ -26,7 +27,8 @@ const lang = flag("lang") === "en" ? "en" : "id";
 const realChat = flag("chat") ? Number(flag("chat")) : null;
 const out = flag("out");
 const transcript: string[] = [];
-const mode = argv.includes("--scamshield") ? "scamshield" : (flag("theme") ?? "");
+const extended = argv.includes("--extended");
+const mode = argv.includes("--scamshield") ? "scamshield" : extended ? "extended" : (flag("theme") ?? "");
 
 const config = loadConfig();
 config.dbPath = join(tmpdir(), `nox-sim-telegram-${Date.now()}.db`);
@@ -40,6 +42,13 @@ const players = [
   { id: 880_000_003, name: "Cy" },
   { id: 880_000_004, name: "Dee" },
   { id: 880_000_005, name: "Eli" },
+  ...(extended
+    ? [
+        { id: 880_000_006, name: "Fay" },
+        { id: 880_000_007, name: "Gus" },
+        { id: 880_000_008, name: "Hal" },
+      ]
+    : []),
 ];
 const nameOf = new Map(players.map((p) => [p.id, p.name]));
 const t0 = Date.now();
@@ -127,15 +136,27 @@ const victim = role("villager")[0]!;
 const dealt = players.map((p) => `${p.name}=${room.roleOf(p.id)}`).join(", ");
 console.log(`\n${stamp()} (roles dealt: ${dealt})\n`);
 transcript.push(`_(peran dibagikan: ${dealt})_\n`);
-await tap(wolf, `n:${room.id}:1:${victim}`, { id: wolf, type: "private" });
-await tap(role("seer")[0]!, `n:${room.id}:1:${wolf}`, { id: role("seer")[0]!, type: "private" });
-await tap(role("doctor")[0]!, `n:${room.id}:1:${victim}`, { id: role("doctor")[0]!, type: "private" });
+if (extended) {
+  // The wolves take the hunter, the witch keeps her potions, the hunter shoots a wolf at dawn.
+  const hunter = role("hunter")[0]!;
+  await tap(role("witch")[0]!, `n:${room.id}:1:0:x`, { id: role("witch")[0]!, type: "private" });
+  for (const w of role("werewolf")) await tap(w, `n:${room.id}:1:${hunter}`, { id: w, type: "private" });
+  await tap(role("seer")[0]!, `n:${room.id}:1:${wolf}`, { id: role("seer")[0]!, type: "private" });
+  await tap(role("doctor")[0]!, `n:${room.id}:1:${role("doctor")[0]}`, { id: role("doctor")[0]!, type: "private" });
+  await until("the hunter's aim", () => sent.some((s) => s.to === hunter && s.buttons.some((b) => b.data.startsWith(`h:${room.id}:1:`))));
+  await tap(hunter, `h:${room.id}:1:${wolf}`, { id: hunter, type: "private" });
+} else {
+  await tap(wolf, `n:${room.id}:1:${victim}`, { id: wolf, type: "private" });
+  await tap(role("seer")[0]!, `n:${room.id}:1:${wolf}`, { id: role("seer")[0]!, type: "private" });
+  await tap(role("doctor")[0]!, `n:${room.id}:1:${victim}`, { id: role("doctor")[0]!, type: "private" });
+}
 
 // 4. Day 1: once the vote opens, every living player votes for the werewolf.
 await until("the vote", () => sent.some((s) => s.to === "group" && s.buttons.some((b) => b.data.startsWith(`v:${room.id}:1:`))));
 const alive = players.map((p) => p.id).filter((x) => room.isAlive(x));
-// Everyone votes the werewolf; the werewolf (who may not vote for himself) votes someone else.
-for (const id of alive) await tap(id, `v:${room.id}:1:${id === wolf ? alive.find((x) => x !== wolf) : wolf}`, groupChat);
+// Everyone votes the (last) werewolf; the werewolf (who may not vote for himself) votes someone else.
+const target = role("werewolf")[0]!;
+for (const id of alive) await tap(id, `v:${room.id}:1:${id === target ? alive.find((x) => x !== target) : target}`, groupChat);
 await until("the end of the game", () => room.status === "ended");
 
 // 5. The chain: the game should be finalized on QIE and each player DMed their credits.
