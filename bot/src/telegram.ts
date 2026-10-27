@@ -8,6 +8,7 @@ import { HOST_PASS, PassReader, type PassClient } from "./chain/passes.js";
 import { countryGuess, parseCountry, payRail, type PayRail } from "./pay-rail.js";
 import { LOGIN_TTL_S, loginLink, loginToken } from "./login.js";
 import { answerNightWatch, startNightWatch } from "./nightwatch.js";
+import { chronicleSummary, dueRecaps } from "./chronicle.js";
 import { GameNights } from "./gamenight.js";
 import { Practice, PRACTICE, PRACTICE_PAYLOADS, practiceLink } from "./practice.js";
 import { AlertMonitor } from "./alerts.js";
@@ -405,6 +406,16 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
   const nightsTick = () => void gameNights.tick().catch((e) => logLine({ event: "gamenight_error", error: e instanceof Error ? e.message : String(e) }));
   setInterval(nightsTick, 60_000).unref();
   nightsTick();
+  // Chronicle (10.07 #2): the group's own history; recaps go out on Mondays (UTC), checked hourly.
+  bot.command("chronicle", async (ctx) => {
+    if (ctx.chat.type === "private" || !ctx.from) return void (await ctx.reply(T[langFrom(ctx.from?.language_code)].groupOnly));
+    const rows = store.chronicleOf(ctx.chat.id);
+    await ctx.reply(chronicleSummary(rows, rows.at(-1)?.lang ?? langFrom(ctx.from.language_code)), { parse_mode: "HTML" });
+  });
+  const recapTick = () => {
+    for (const r of dueRecaps(store)) void messenger.sendGroup(r.chatId, r.text).catch((e) => logLine({ event: "chronicle_recap_error", error: e instanceof Error ? e.message : String(e) }));
+  };
+  setInterval(recapTick, 3600_000).unref();
   // Daily Night Watch (10.07 #7): today's puzzle in a private chat.
   bot.command(["nightwatch", "ronda"], async (ctx) => {
     if (ctx.chat.type !== "private" || !ctx.from) return;

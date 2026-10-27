@@ -17,6 +17,7 @@ await bot.api.setMyCommands([
   { command: "pass", description: "Your Host Pass and game wallet (in a private chat with the bot)" },
   { command: "latihan", description: "A 3-minute Scam Shield practice to share with family" },
   { command: "nightwatch", description: "Daily Night Watch: a one-minute werewolf puzzle" },
+  { command: "chronicle", description: "This group's Nox history (in a group)" },
 ]);
 
 const allowed_updates = ["message", "callback_query"] as const;
