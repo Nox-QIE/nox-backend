@@ -67,6 +67,11 @@ export interface Config {
   apiUrl?: string;
   /** Nudge a quiet discussion: "quiet" (default, needs Telegram privacy mode off), "always", "off". */
   nudge: "quiet" | "always" | "off";
+  /**
+   * NOX_EXTENDED_ROLES: offer the extended role set (hunter, witch) in lobbies. It needs a NoxGame that
+   * accepts their codes, so it defaults to on only without a chain.
+   */
+  extendedRoles: boolean;
   /** "required": themes, Marketplace GMs and big lobbies need the host's Host Pass (NoxPayments). */
   hostPass: "off" | "required";
   /** Webhook mode when set; long polling otherwise. */
@@ -131,6 +136,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     rateLimit: parseRateLimit(env.NOX_RATE_LIMIT || "20/10"),
     hostPass: hostPassMode(env),
     nudge: nudgeMode(env.NOX_DISCUSSION_NUDGE),
+    extendedRoles: env.NOX_EXTENDED_ROLES ? env.NOX_EXTENDED_ROLES === "on" : (env.NOX_CHAIN || "off") === "off",
     timings: {
       lobbyMs: seconds(env, "LOBBY_SECONDS", DEFAULT_TIMINGS.lobbyMs),
       nightMs: seconds(env, "NIGHT_SECONDS", DEFAULT_TIMINGS.nightMs),

@@ -11,6 +11,7 @@ import {
   type GameState,
   type Role,
   type RoleAssignment,
+  type RoleSet,
 } from "@nox/shared/engine";
 import { ACTION_CODE, actionHash, commitRoles, configHash, randomBytes32, resultHash, ROLE_CODE, TEAM_CODE, type NightActionKind } from "@nox/shared/crypto-spec";
 import type { Hex } from "viem";
@@ -61,6 +62,8 @@ export interface RoomDeps {
    */
   nudge?: "quiet" | "always";
   canCountMessages?: boolean;
+  /** Offer the extended role set (hunter, witch) in the lobby; needs a NoxGame that accepts their codes. */
+  extendedRoles?: boolean;
   /** Every finished game's narrator report (AI cost per game, F09-D05). */
   onGameReport?: (r: { gameId: Hex | null; agentId: number | null; players: number; report: NarratorReport }) => void;
   /** A finished game narrated by a Marketplace agent: how its persona behaved (F18-S11). */
@@ -72,8 +75,7 @@ export interface Reply {
   text?: string;
 }
 
-const NIGHT_ROLES: ReadonlySet<Role> = new Set<Role>(["werewolf", "seer", "doctor"]);
-const ACTION_OF: Partial<Record<Role, NightActionKind>> = { werewolf: "kill", seer: "inspect", doctor: "protect" };
+const NIGHT_ROLES: ReadonlySet<Role> = new Set<Role>(["werewolf", "seer", "doctor", "witch"]);
 
 /** One game in one Telegram group, from lobby to the end. All mutations run through a queue. */
 export class GameRoom {
@@ -94,7 +96,14 @@ export class GameRoom {
   private discussionLog: number[] = [];
   private nudgesSent = 0;
   private nightLog: NightLogEntry[] = [];
-  private phaseStep: "night" | "discussion" | "vote" | null = null;
+  private phaseStep: "night" | "discussion" | "vote" | "shot" | null = null;
+  /** Classic, or extended with the hunter and the witch (10.07 #5); the host picks it in the lobby. */
+  private roleSet: RoleSet = "classic";
+  /** Witches who chose to keep their potions tonight. */
+  private readonly witchPassed = new Set<string>();
+  /** A day's result waits for the hunter's shot: recordRound would close the round the shot belongs to. */
+  private pendingDayResult: { round: number; hash: Hex } | null = null;
+  private roleLabel: (r: Role) => string = (r) => roleName(this.lang, r);
   private queue: Promise<unknown> = Promise.resolve();
   private readonly t;
   private readonly ledger: GameLedger;
@@ -176,6 +185,7 @@ export class GameRoom {
   private lobbyText() {
     let text = this.t.lobby(this.name(this.hostId), [...this.players.keys()].map((id) => this.name(id)), MIN_PLAYERS, MAX_PLAYERS, Math.round(this.deps.timings.lobbyMs / 1000));
     if (this.sc) text = `🛡️ <b>${this.sc.title}</b>\n${text}`;
+    else if (this.deps.extendedRoles) text += `\n${this.t.rolesLine(this.roleSet === "extended")}`;
     if (!this.lobbyAgents().length) return text;
     const picked = this.lobbyAgents().find((a) => a.id === this.agentId);
     return `${text}\n${this.t.gmLine(picked ? `${esc(picked.persona.name)}${picked.persona.tagline ? ` (${esc(picked.persona.tagline)})` : ""}` : this.t.gmDefault)}`;
@@ -189,6 +199,7 @@ export class GameRoom {
       rows.push([{ text: mark(this.agentId === null, this.t.gmDefault), data: `a:${this.id}:0` }]);
       for (const a of agents) rows.push([{ text: mark(this.agentId === a.id, `${a.id < 0 ? "🎨" : "🎭"} ${a.persona.name}`), data: `a:${this.id}:${a.id}` }]);
     }
+    if (!this.sc && this.deps.extendedRoles) rows.push([{ text: this.t.rolesBtn(this.roleSet === "extended"), data: `r:${this.id}` }]);
     return rows;
   }
 
@@ -205,6 +216,20 @@ export class GameRoom {
         await this.deps.messenger.editGroup(this.chatId, this.lobbyMessageId, this.lobbyText(), this.lobbyKeyboard());
       }
       return { ok: true, text: this.t.gmPicked(agent ? agent.persona.name : this.t.gmDefault) };
+    });
+  }
+
+  /** Host switches the role set in the lobby (toggles, or sets `extended`). Scam Shield keeps its own roles. */
+  setRoles(userId: number, extended?: boolean): Promise<Reply> {
+    return this.run(async () => {
+      if (this.status !== "lobby") return { ok: false, text: this.t.notLobby };
+      if (userId !== this.hostId) return { ok: false, text: this.t.onlyHost };
+      if (this.sc || !this.deps.extendedRoles) return { ok: false, text: this.t.stale };
+      this.roleSet = (extended ?? this.roleSet === "classic") ? "extended" : "classic";
+      if (this.lobbyMessageId !== null) {
+        await this.deps.messenger.editGroup(this.chatId, this.lobbyMessageId, this.lobbyText(), this.lobbyKeyboard());
+      }
+      return { ok: true, text: this.t.rolesPicked(this.roleSet === "extended") };
     });
   }
 
@@ -255,8 +280,9 @@ export class GameRoom {
     if (agent) this.narrator = this.deps.narratorFor(this.lang, agent.persona, wording, agent);
     else this.agentId = null;
     const ids = [...this.players.keys()].map(String);
-    this.assignments = assignRoles(ids, this.deps.randomInt);
-    const created = createGame(this.assignments);
+    this.roleLabel = (r) => this.sc?.roles[r] ?? roles?.[r] ?? roleName(this.lang, r);
+    this.assignments = assignRoles(ids, this.deps.randomInt, this.roleSet);
+    const created = createGame(this.assignments, { revealOnDeath: true, ...(this.roleSet === "extended" ? { roleSet: this.roleSet } : {}) });
     this.state = created.state;
     this.events.push(...created.events);
 
@@ -265,7 +291,8 @@ export class GameRoom {
     const wolves = this.assignments.filter((a) => a.role === "werewolf").map((a) => a.id);
     for (const a of this.assignments) {
       const mates = a.role === "werewolf" ? wolves.filter((w) => w !== a.id).map((w) => this.name(w)) : [];
-      let text = this.t.yourRole(this.sc ? this.sc.roles[a.role] : (roles?.[a.role] ?? roleName(this.lang, a.role)), mates);
+      let text = this.t.yourRole(this.roleLabel(a.role), mates);
+      if (a.role === "hunter" || a.role === "witch") text += `\n${this.t.roleHelp[a.role]}`;
       const secret = this.secrets.get(Number(a.id));
       if (secret) text += `\n\n${this.t.roleProof(secret.salt)}`;
       await this.deps.messenger.sendDM(Number(a.id), text);
@@ -303,6 +330,8 @@ export class GameRoom {
       lang: this.lang,
       gm: gmRef(agent),
       scenario: this.scenario ? scenarioRef(this.scenario) : null,
+      // Only extended games name their role set, so a classic game's config (and hash) is unchanged.
+      ...(this.roleSet === "extended" ? { roleSet: this.roleSet } : {}),
     };
     // A Scam Shield game is created in its mode, so a village win earns the on-chain bonus (F10-S05).
     this.ledger.startGame(gameId, configHash(config), this.assignments.map((a) => Number(a.id)), committed.root, this.scenario ? 1 : 0);
@@ -322,11 +351,20 @@ export class GameRoom {
 
   private async startNight() {
     this.phaseStep = "night";
+    this.witchPassed.clear();
     const state = this.state!;
     await this.deps.messenger.sendGroup(this.chatId, await this.narrator.nightFalls(publicView(state, this.events)));
     const alive = state.seats.filter((id) => state.players[id]!.alive);
     for (const id of alive) {
       const role = state.players[id]!.role;
+      if (role === "witch") {
+        // Poison now (or pass); the heal is offered once the werewolves' victim is known.
+        if (!(state.potionsUsed[id] ?? []).includes("poison")) {
+          const kb = [...this.targetKeyboard("n", alive.filter((t) => t !== id), "p"), [{ text: this.t.passBtn, data: `n:${this.id}:${state.round}:0:x` }]];
+          await this.deps.messenger.sendDM(Number(id), this.t.pickPoison, kb);
+        }
+        continue;
+      }
       if (!NIGHT_ROLES.has(role)) continue;
       const targets = alive.filter((t) => {
         if (role === "werewolf") return state.players[t]!.role !== "werewolf";
@@ -340,39 +378,54 @@ export class GameRoom {
   }
 
   /** Buttons carry the round so a button from an earlier night or day is rejected as stale. */
-  private targetKeyboard(prefix: "n" | "v", targets: string[]): Keyboard {
+  private targetKeyboard(prefix: "n" | "v" | "h", targets: string[], suffix?: string): Keyboard {
     const round = this.state!.round;
-    return targets.map((t) => [{ text: this.players.get(Number(t)) ?? t, data: `${prefix}:${this.id}:${round}:${t}` }]);
+    return targets.map((t) => [{ text: this.players.get(Number(t)) ?? t, data: `${prefix}:${this.id}:${round}:${t}${suffix ? `:${suffix}` : ""}` }]);
   }
 
-  private isStale(step: "night" | "vote", round: number) {
+  private isStale(step: "night" | "vote" | "shot", round: number) {
     return this.status !== "running" || this.phaseStep !== step || this.state!.round !== round;
   }
 
-  nightAction(userId: number, round: number, targetId: string): Promise<Reply> {
+  /** `potion`: the witch's choice, "h" heal, "p" poison or "x" keep both tonight. */
+  nightAction(userId: number, round: number, targetId: string, potion?: string): Promise<Reply> {
     return this.run(async () => {
       if (this.isStale("night", round)) return { ok: false, text: this.t.stale };
+      const me = String(userId);
+      if (potion === "x") {
+        const s = this.state!;
+        if (s.players[me]?.role !== "witch" || !s.players[me]!.alive || s.nightActions[me]) return { ok: false, text: this.t.noPermission };
+        this.witchPassed.add(me);
+        if (this.allNightActionsIn()) await this.endNight();
+        return { ok: true, text: this.t.witchPassed };
+      }
+      const kind = potion === "h" ? "heal" : potion === "p" ? "poison" : undefined;
+      let evs: GameEvent[];
       try {
-        this.exec({ type: "night_action", actor: String(userId), target: targetId });
+        evs = this.exec({ type: "night_action", actor: me, target: targetId, ...(kind ? { kind } : {}) });
       } catch (e) {
         if (e instanceof GameRuleError) return { ok: false, text: this.t.noPermission };
         throw e;
       }
-      this.commitNight(userId, round, Number(targetId));
+      this.witchPassed.delete(me);
+      this.commitNight(userId, round, this.state!.nightActions[me]!.kind, Number(targetId));
+      for (const e of evs) {
+        if (e.type !== "victim_known") continue;
+        const kb: Keyboard = [[{ text: this.t.healBtn(this.players.get(Number(e.target)) ?? e.target), data: `n:${this.id}:${round}:${e.target}:h` }], [{ text: this.t.passBtn, data: `n:${this.id}:${round}:0:x` }]];
+        await this.deps.messenger.sendDM(Number(e.witch), this.t.witchVictim(this.name(e.target)), kb);
+      }
       const reply = { ok: true, text: this.t.actionOk(this.name(targetId)) };
       if (this.allNightActionsIn()) await this.endNight();
       return reply;
     });
   }
 
-  private commitNight(userId: number, round: number, targetUserId: number) {
-    const kind = ACTION_OF[this.roleOf(userId)!];
+  /** Commits a secret action from the player's wallet: a night action, or the hunter's shot. */
+  private commitNight(userId: number, round: number, kind: NightActionKind, targetUserId: number) {
     // Kept for the rare moments at the end (10.07 #4); a changed choice replaces the earlier one.
-    if (kind) {
-      this.nightLog = this.nightLog.filter((n) => !(n.round === round && n.actor === String(userId)));
-      this.nightLog.push({ round, actor: String(userId), kind, target: String(targetUserId) });
-    }
-    if (!this.gameId || !kind) return;
+    this.nightLog = this.nightLog.filter((n) => !(n.round === round && n.actor === String(userId)));
+    this.nightLog.push({ round, actor: String(userId), kind, target: String(targetUserId) });
+    if (!this.gameId) return;
     const nonce = randomBytes32();
     const hash = actionHash(this.gameId, round, this.ledger.addressOf(userId)!, kind, this.ledger.addressOf(targetUserId)!, nonce);
     this.nights.push({ round, userId, action: ACTION_CODE[kind], targetUserId, nonce });
@@ -384,7 +437,9 @@ export class GameRoom {
     const s = this.state!;
     return s.seats.every((id) => {
       const p = s.players[id]!;
-      return !p.alive || !NIGHT_ROLES.has(p.role) || Boolean(s.nightActions[id]);
+      // A witch with no potion left has nothing to do; otherwise she acts or passes.
+      if (p.role === "witch" && (s.potionsUsed[id] ?? []).length === 2) return true;
+      return !p.alive || !NIGHT_ROLES.has(p.role) || Boolean(s.nightActions[id]) || this.witchPassed.has(id);
     });
   }
 
@@ -403,7 +458,17 @@ export class GameRoom {
       const name = resolved.eliminated ? this.name(resolved.eliminated) : null;
       await this.deps.messenger.sendGroup(this.chatId, await this.narrator.morning(publicView(this.state!, this.events), name, resolved.revealedRole));
     }
+    for (const e of evs) {
+      if (e.type === "player_died" && e.cause === "poison") {
+        await this.deps.messenger.sendGroup(this.chatId, this.t.poisonDeath(this.name(e.id), e.revealedRole && this.roleLabel(e.revealedRole)));
+      }
+    }
+    if (await this.hunterStep(evs)) return;
     if (await this.finishIfEnded(evs)) return;
+    await this.startDay();
+  }
+
+  private async startDay() {
     if (this.sc) {
       const hint = this.sc.hints[(this.state!.round - 1) % this.sc.hints.length]!;
       await this.deps.messenger.sendGroup(this.chatId, hint);
@@ -487,13 +552,63 @@ export class GameRoom {
     const dayRound = this.state!.round;
     const evs = this.exec({ type: "end_day" });
     const resolved = evs.find((e) => e.type === "day_resolved");
-    if (this.gameId && resolved) this.ledger.recordRound(this.gameId, dayRound, resultHash(resolved));
+    if (this.gameId && resolved) {
+      // An exiled hunter shoots in this round, so the round is closed on chain after the shot.
+      if (this.state!.pendingShot) this.pendingDayResult = { round: dayRound, hash: resultHash(resolved) };
+      else this.ledger.recordRound(this.gameId, dayRound, resultHash(resolved));
+    }
     if (resolved?.type === "day_resolved") {
       const name = resolved.eliminated ? this.name(resolved.eliminated) : null;
       await this.deps.messenger.sendGroup(this.chatId, await this.narrator.dayResult(publicView(this.state!, this.events), name, resolved.revealedRole));
     }
+    if (await this.hunterStep(evs)) return;
     if (await this.finishIfEnded(evs)) return;
     await this.startNight();
+  }
+
+  /** A hunter just died: they get one shot before anything else (timer = the vote's). */
+  private async hunterStep(evs: GameEvent[]): Promise<boolean> {
+    const must = evs.find((e) => e.type === "hunter_must_shoot");
+    if (must?.type !== "hunter_must_shoot") return false;
+    this.phaseStep = "shot";
+    const s = this.state!;
+    await this.deps.messenger.sendGroup(this.chatId, this.t.hunterAim(this.name(must.hunter), Math.round(this.deps.timings.voteMs / 1000)));
+    await this.deps.messenger.sendDM(Number(must.hunter), this.t.pickShoot, this.targetKeyboard("h", s.seats.filter((id) => s.players[id]!.alive)));
+    this.schedule(this.deps.timings.voteMs, () => this.resolveShot(null).then(() => undefined));
+    return true;
+  }
+
+  shoot(userId: number, round: number, targetId: string): Promise<Reply> {
+    return this.run(async () => {
+      if (this.isStale("shot", round)) return { ok: false, text: this.t.stale };
+      return this.resolveShot({ userId, target: targetId });
+    });
+  }
+
+  private async resolveShot(shot: { userId: number; target: string } | null): Promise<Reply> {
+    if (this.phaseStep !== "shot") return { ok: false, text: this.t.stale };
+    const s = this.state!;
+    const hunter = s.pendingShot!.hunter;
+    const round = s.round;
+    let evs: GameEvent[];
+    try {
+      evs = this.exec(shot ? { type: "shoot", actor: String(shot.userId), target: shot.target } : { type: "skip_shot" });
+    } catch (e) {
+      if (e instanceof GameRuleError) return { ok: false, text: this.t.noPermission };
+      throw e;
+    }
+    this.cancelTimer?.();
+    this.phaseStep = null;
+    if (shot) this.commitNight(shot.userId, round, "shoot", Number(shot.target));
+    if (this.gameId && this.pendingDayResult) this.ledger.recordRound(this.gameId, this.pendingDayResult.round, this.pendingDayResult.hash);
+    this.pendingDayResult = null;
+    const died = evs.find((e) => e.type === "player_died");
+    await this.deps.messenger.sendGroup(
+      this.chatId,
+      died?.type === "player_died" ? this.t.hunterShot(this.name(hunter), this.name(died.id), died.revealedRole && this.roleLabel(died.revealedRole)) : this.t.hunterPassed(this.name(hunter)),
+    );
+    if (!(await this.finishIfEnded(evs))) await (this.state!.phase === "day" ? this.startDay() : this.startNight());
+    return shot ? { ok: true, text: this.t.actionOk(this.name(shot.target)) } : { ok: true };
   }
 
   private async finishIfEnded(evs: GameEvent[]): Promise<boolean> {

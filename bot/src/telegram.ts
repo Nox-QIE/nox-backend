@@ -299,7 +299,7 @@ export async function passReply(a: {
 }
 
 /** Wire Telegram updates to the registry. Nox stays a regular bot: no Mini App / Web App buttons. */
-export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, apiUrl, timings, gm, chain, rateLimit, hostPass, nudge, paymentContact, loginSecret }: Config) {
+export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, apiUrl, timings, gm, chain, rateLimit, hostPass, nudge, extendedRoles, paymentContact, loginSecret }: Config) {
   const bot = new Bot(botToken);
   await bot.init();
   // First middleware: refused updates never reach the game.
@@ -356,6 +356,7 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
     // Reading the discussion (quiet nudge, witness report) needs Telegram privacy mode off (BotFather → Group Privacy → Disable).
     canCountMessages: bot.botInfo.can_read_all_group_messages,
     ...(nudge !== "off" ? { nudge } : {}),
+    extendedRoles,
     ...(hostPassCheck ? { hostPass: hostPassCheck } : {}),
   });
   await recoverGames(store, ledger, messenger, logLine);
@@ -467,17 +468,20 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
     // "/newgame scamshield" starts Scam Shield; "/newgame horor" preselects a theme (LLM GM only).
     const scenario = scenarioFrom(ctx.match);
     const theme = !scenario && gm.mode === "llm" ? themeIdFrom(ctx.match) : null;
+    // "/newgame extended" (or "hunter", "witch") starts the lobby with the extended role set.
+    const extended = extendedRoles && !scenario && /\b(extended|hunter|witch)\b/i.test(ctx.match);
     const r = await registry.create(ctx.chat.id, ctx.from.id, displayName(ctx.from), lang, {
       ...(theme !== null ? { agentId: theme } : {}),
       ...(scenario ? { scenario } : {}),
+      ...(extended ? { extendedRoles: true } : {}),
     });
     if (!r.ok && r.text) await ctx.reply(r.text, { parse_mode: "HTML" });
   });
 
-  // Callback data: j:<room> | s:<room> | a:<room>:<agentId> | n:<room>:<round>:<target> | v:<room>:<round>:<target>
-  // | q:<item>:<s|k> (practice) | f:yes (forget) | g:<booking> (open a booked Game Night) | w:<day>:<suspect> (Night Watch)
+  // Callback data: j:<room> | s:<room> | a:<room>:<agentId> | r:<room> (role set) | n:<room>:<round>:<target>[:<h|p|x>]
+  // (witch potion) | v:<room>:<round>:<target> | h:<room>:<round>:<target> (hunter's shot) | q:<item>:<s|k> (practice) | f:yes (forget) | g:<booking> (open a booked Game Night) | w:<day>:<suspect> (Night Watch)
   bot.on("callback_query:data", async (ctx) => {
-    const [kind, roomId, roundStr, target] = ctx.callbackQuery.data.split(":");
+    const [kind, roomId, roundStr, target, potion] = ctx.callbackQuery.data.split(":");
     if (kind === "w") {
       // w:<day>:<suspect>, one answer per day; the buttons go away once answered.
       const text = answerNightWatch(store, ctx.from.id, roomId ?? "", Number(roundStr), langFrom(ctx.from.language_code));
@@ -514,7 +518,9 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
       if (kind === "j") reply = await registry.join(room.id, user.id, displayName(user));
       else if (kind === "s") reply = await room.start(user.id);
       else if (kind === "a") reply = await room.pickAgent(user.id, Number(roundStr));
-      else if (kind === "n" && target) reply = await room.nightAction(user.id, round, target);
+      else if (kind === "r") reply = await room.setRoles(user.id);
+      else if (kind === "n" && target) reply = await room.nightAction(user.id, round, target, potion);
+      else if (kind === "h" && target) reply = await room.shoot(user.id, round, target);
       else if (kind === "v" && target) reply = await room.vote(user.id, round, target);
     }
     await ctx.answerCallbackQuery(reply.text ? { text: stripTags(reply.text) } : undefined);

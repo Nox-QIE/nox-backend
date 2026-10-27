@@ -8,8 +8,8 @@ export const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;")
 export const unesc = (s: string) => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 
 const ROLE: Record<Lang, Record<Role, string>> = {
-  id: { werewolf: "🐺 Werewolf", seer: "🔮 Seer", doctor: "🩺 Doctor", villager: "🧑‍🌾 Warga" },
-  en: { werewolf: "🐺 Werewolf", seer: "🔮 Seer", doctor: "🩺 Doctor", villager: "🧑‍🌾 Villager" },
+  id: { werewolf: "🐺 Werewolf", seer: "🔮 Seer", doctor: "🩺 Doctor", villager: "🧑‍🌾 Warga", hunter: "🏹 Hunter", witch: "🧪 Witch" },
+  en: { werewolf: "🐺 Werewolf", seer: "🔮 Seer", doctor: "🩺 Doctor", villager: "🧑‍🌾 Villager", hunter: "🏹 Hunter", witch: "🧪 Witch" },
 };
 
 const TEAM: Record<Lang, Record<Team, string>> = {
@@ -81,6 +81,21 @@ type Dict = {
   discussion: (secs: number) => string;
   voteOpen: (secs: number) => string;
   noSelfVote: string;
+  // Extended role set (10.07 #5): hunter and witch.
+  rolesLine: (extended: boolean) => string;
+  rolesBtn: (extended: boolean) => string;
+  rolesPicked: (extended: boolean) => string;
+  roleHelp: { hunter: string; witch: string };
+  pickPoison: string;
+  witchVictim: (name: string) => string;
+  healBtn: (name: string) => string;
+  passBtn: string;
+  witchPassed: string;
+  poisonDeath: (name: string, role: string | null) => string;
+  hunterAim: (name: string, secs: number) => string;
+  pickShoot: string;
+  hunterShot: (hunter: string, target: string, role: string | null) => string;
+  hunterPassed: (hunter: string) => string;
   /** Rare moments of the game (10.07 #4), each a badge on chain. */
   rareMoments: (lines: { who: string; badge: string; why: string }[]) => string;
   voteOk: (target: string) => string;
@@ -174,6 +189,23 @@ export const T: Record<Lang, Dict> = {
     discussion: (s) => `☀️ Diskusi dimulai. ${s} detik sebelum voting.`,
     voteOpen: (s) => `🗳️ Voting dibuka (${s} detik). Siapa yang dicurigai? Kamu tidak bisa memilih dirimu sendiri.`,
     noSelfVote: "Kamu tidak bisa memilih dirimu sendiri.",
+    rolesLine: (x) => (x ? "🎭 Peran: <b>Extended</b> (Hunter mulai 6 pemain, Witch mulai 8)" : "🎭 Peran: Classic"),
+    rolesBtn: (x) => (x ? "🎭 Peran: Extended ✓" : "🎭 Peran: Classic"),
+    rolesPicked: (x) => (x ? "Peran Extended: Hunter dan Witch ikut bermain." : "Peran Classic."),
+    roleHelp: {
+      hunter: "Bila kamu mati (diserang, diracun, atau diusir), kamu menembak satu pemain sebelum game berlanjut.",
+      witch: "Kamu punya dua ramuan, masing-masing sekali per game: obat (menyelamatkan korban werewolf) dan racun (membunuh satu pemain). Satu ramuan per malam. Selama obat masih ada, kamu diberi tahu siapa korban werewolf.",
+    },
+    pickPoison: "🧪 Racun: pilih pemain yang ingin kamu racuni malam ini, atau tunggu kabar korban werewolf:",
+    witchVictim: (n) => `🧪 Werewolf memilih <b>${n}</b> malam ini. Pakai obat untuk menyelamatkannya?`,
+    healBtn: (n) => `💊 Selamatkan ${n}`,
+    passBtn: "Lewati malam ini",
+    witchPassed: "Kamu menyimpan ramuanmu malam ini.",
+    poisonDeath: (n, r) => `☠️ ${n} juga ditemukan tak bernyawa pagi ini${r ? `. Ternyata dia ${r}` : ""}.`,
+    hunterAim: (n, s) => `🏹 ${n} adalah Hunter! Dengan sisa tenaga, dia membidik… (${s} detik)`,
+    pickShoot: "🏹 Kamu tumbang. Pilih satu pemain untuk kamu tembak:",
+    hunterShot: (h, t, r) => `🏹 ${h} menembak <b>${t}</b>${r ? `. Ternyata dia ${r}` : ""}.`,
+    hunterPassed: (h) => `🏹 ${h} menurunkan busurnya. Tidak ada yang tertembak.`,
     rareMoments: (ls) => `🏅 <b>Momen langka</b>\n${ls.map((l) => `• ${l.who}: <b>${l.badge}</b> (${l.why})`).join("\n")}\nLencana ini dicatat di blockchain QIE.`,
     voteOk: (t) => `Vote tercatat: ${t}.`,
     voted: (v, t) => `${v} memilih ${t}.`,
@@ -264,6 +296,23 @@ export const T: Record<Lang, Dict> = {
     discussion: (s) => `☀️ Discussion starts. Voting in ${s}s.`,
     voteOpen: (s) => `🗳️ Voting is open (${s}s). Who do you suspect? You cannot vote for yourself.`,
     noSelfVote: "You cannot vote for yourself.",
+    rolesLine: (x) => (x ? "🎭 Roles: <b>Extended</b> (Hunter from 6 players, Witch from 8)" : "🎭 Roles: Classic"),
+    rolesBtn: (x) => (x ? "🎭 Roles: Extended ✓" : "🎭 Roles: Classic"),
+    rolesPicked: (x) => (x ? "Extended roles: the Hunter and the Witch join." : "Classic roles."),
+    roleHelp: {
+      hunter: "When you die (attacked, poisoned or exiled), you shoot one player before the game goes on.",
+      witch: "You have two potions, each once per game: a heal (saves the werewolves' victim) and a poison (kills one player). One potion per night. While you still have the heal, you are told who the werewolves chose.",
+    },
+    pickPoison: "🧪 Poison: choose a player to poison tonight, or wait to hear the werewolves' victim:",
+    witchVictim: (n) => `🧪 The werewolves chose <b>${n}</b> tonight. Use your heal to save them?`,
+    healBtn: (n) => `💊 Save ${n}`,
+    passBtn: "Pass tonight",
+    witchPassed: "You keep your potions tonight.",
+    poisonDeath: (n, r) => `☠️ ${n} was also found dead this morning${r ? `. They were ${r}` : ""}.`,
+    hunterAim: (n, s) => `🏹 ${n} was the Hunter! With their last strength, they take aim… (${s} seconds)`,
+    pickShoot: "🏹 You have fallen. Choose one player to shoot:",
+    hunterShot: (h, t, r) => `🏹 ${h} shoots <b>${t}</b>${r ? `. They were ${r}` : ""}.`,
+    hunterPassed: (h) => `🏹 ${h} lowers the bow. Nobody is shot.`,
     rareMoments: (ls) => `🏅 <b>Rare moments</b>\n${ls.map((l) => `• ${l.who}: <b>${l.badge}</b> (${l.why})`).join("\n")}\nThese badges are recorded on the QIE blockchain.`,
     voteOk: (t) => `Vote recorded: ${t}.`,
     voted: (v, t) => `${v} voted for ${t}.`,

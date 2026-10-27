@@ -11,7 +11,7 @@ Commands:
 | Command | Who | Payload | Effect |
 |---|---|---|---|
 | `/start` | player, private chat | optional deep-link word: `latihan` / `practice` opens the Scam Shield quiz | creates the account and its derived wallet; stores telegram id, locale and wallet address |
-| `/newgame` | host, group | optional theme word, e.g. `/newgame horor` | opens a lobby |
+| `/newgame` | host, group | optional theme word, e.g. `/newgame horor`; `extended` (or `hunter`, `witch`) for the extended role set | opens a lobby |
 | `/pass` | host, private chat | – | shows Host Pass status (read on chain) |
 | `/latihan`, `/practice` | anyone, private chat | – | Scam Shield practice quiz |
 | `/privacy`, `/privasi` | anyone | – | privacy notice |
@@ -28,7 +28,9 @@ Button callback data, at most 64 bytes as Telegram requires. `<room>` is the lob
 | `j:<room>` | player | join the lobby |
 | `s:<room>` | host | start the game |
 | `a:<room>:<agentId>` | host | pick a Game Master (`0` = Nox) |
-| `n:<room>:<round>:<target>` | player with a night role, by DM | night action (kill, see, protect) |
+| `n:<room>:<round>:<target>[:<h\|p\|x>]` | player with a night role, by DM | night action (kill, see, protect); the witch adds her potion: `h` heal, `p` poison, `x` keep both tonight (target `0`) |
+| `h:<room>:<round>:<target>` | the hunter who just died, by DM | the hunter's last shot (extended roles) |
+| `r:<room>` | host, in the lobby | switch the role set: Classic or Extended (hunter, witch) |
 | `v:<room>:<round>:<target>` | living player | day vote |
 | `q:<item>:<s\|k>` | anyone in the practice quiz | answer: scam (`s`) or safe (`k`) |
 | `f:yes` | player | confirm `/forget` |

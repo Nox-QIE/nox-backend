@@ -124,6 +124,10 @@ Saat diskusi sepi, Game Master melempar satu pertanyaan terbuka di tengah waktu 
 
 **Witness report (10.07 #1).** Saat voting dibuka, Game Master membacakan "Laporan Saksi": siapa paling sering disebut, siapa paling banyak bicara, siapa diam. Bot membaca tiap pesan grup sekali di memori, menambah hitungan, lalu membuangnya; teks tidak disimpan dan tidak dikirim ke AI, hanya nama dan angka. Butuh Group Privacy dimatikan; tanpa itu laporan tidak muncul.
 
+## Peran Extended: Hunter & Witch (10.07 #5)
+
+Host bisa memilih set peran **Extended** di lobby (tombol "🎭 Roles") atau dengan `/newgame extended`. Mulai 6 pemain satu warga menjadi **Hunter**: saat mati (diserang, diracun, atau diusir) dia menembak satu pemain lewat DM (timer = waktu vote; habis = tidak menembak), dan pemenang baru dihitung setelah tembakan. Mulai 8 pemain satu warga lagi menjadi **Witch**: obat dan racun, masing-masing sekali per game, satu per malam; selama obat masih ada dia diberi tahu korban werewolf. Racun, obat, dan tembakan dikomit on-chain dari wallet pemain seperti aksi malam (kode aksi 4, 5, 6) dan dibuka saat reveal; `recordRound` hari itu ditunda sampai Hunter menembak. Butuh NoxGame yang menerima kode peran 5–6 (nox-contracts#20), jadi `NOX_EXTENDED_ROLES` default `off` bila chain aktif. Simulasi: `sim:telegram -- --extended`.
+
 ## Uji di testnet
 
 `npm run sim:game` memainkan satu game 5 pemain lewat GameRoom + ViemLedger asli di chain `.env` (tanpa Telegram) dan mencetak status on-chain, credits per pemain, dan gas per langkah. `npm run sim:game -- --scamshield` memainkan mode Scam Shield; bila grup menang, lencana Scam Spotter diberikan di NoxBadges (`NOX_BADGES_ADDRESS`) dan jumlahnya per pemain dicetak.

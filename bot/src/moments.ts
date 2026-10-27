@@ -14,7 +14,7 @@ export const BADGES: Record<BadgeKey, { name: string; why: Record<Lang, string> 
   PERFECT_SEER: { name: "Perfect Seer", why: { id: "setiap penyelidikan menemukan werewolf", en: "every inspection found a werewolf" } },
   LAST_WOLF_STANDING: { name: "Last Wolf Standing", why: { id: "werewolf terakhir yang hidup, dan werewolf menang", en: "the last werewolf alive, and the wolves won" } },
   SECOND_LIFE: { name: "Second Life", why: { id: "diserang werewolf, diselamatkan dokter, dan bertahan sampai akhir", en: "attacked by the wolves, saved by the doctor, alive at the end" } },
-  GUARDIAN: { name: "Guardian", why: { id: "dokter yang menggagalkan serangan werewolf", en: "the doctor who stopped a werewolf attack" } },
+  GUARDIAN: { name: "Guardian", why: { id: "menggagalkan serangan werewolf (dokter atau obat witch)", en: "stopped a werewolf attack (doctor or the witch's heal)" } },
 };
 
 export interface NightLogEntry {
@@ -36,8 +36,8 @@ export function rareMoments(o: { roles: Record<string, Role>; alive: Record<stri
     if (mine.every((n) => o.roles[n.target] === "werewolf")) add("PERFECT_SEER", seer);
   }
 
-  // A save: the doctor protected the player a werewolf chose the same night.
-  for (const p of o.nights.filter((n) => n.kind === "protect")) {
+  // A save: the doctor (or the witch's heal) protected the player a werewolf chose the same night.
+  for (const p of o.nights.filter((n) => n.kind === "protect" || n.kind === "heal")) {
     const attacked = o.nights.some((n) => n.kind === "kill" && n.round === p.round && n.target === p.target);
     if (!attacked) continue;
     add("GUARDIAN", p.actor);
