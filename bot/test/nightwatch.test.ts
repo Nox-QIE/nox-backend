@@ -16,6 +16,7 @@ describe("Daily Night Watch (10.07 #7)", () => {
         p.clues.every((c) => (c.kind === "notAt" ? s.place !== c.place : c.kind === "carried" ? s.item === c.item : s.mud === c.mud)),
       );
       expect(fits).toEqual([p.suspects[p.answer]]);
+      expect(p.clues.some((c) => c.kind !== "notAt")).toBe(true); // never places alone
     }
   });
 

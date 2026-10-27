@@ -66,6 +66,8 @@ export function puzzleOf(day: string): Puzzle {
         const c = pool[rand(pool.length)]!;
         if (!clues.includes(c)) clues.push(c);
       }
+      // Places alone would make it a counting game: at least one clue is about the item or the boots.
+      if (clues.every((c) => c.kind === "notAt")) continue;
       const fit = suspects.filter((s) => clues.every((c) => holds(s, c)));
       if (fit.length === 1) return { day, suspects, clues, answer };
     }
