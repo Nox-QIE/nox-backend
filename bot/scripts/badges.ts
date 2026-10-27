@@ -27,8 +27,13 @@ for (const key of Object.keys(BADGES) as BadgeKey[]) {
     console.log(`${key.padEnd(20)} missing (dry run: --send defines it as "${BADGES[key].name}")`);
     continue;
   }
-  const { request } = await op.publicClient.simulateContract({ account: op.account, address: c.badgesAddress, abi: NoxBadgesAbi as Abi, functionName: "defineBadge", args: [id, BADGES[key].name, true] });
-  const hash = await op.wallet.writeContract(request as never);
+  const call = { account: op.account, address: c.badgesAddress, abi: NoxBadgesAbi as Abi, functionName: "defineBadge", args: [id, BADGES[key].name, true] } as const;
+  const { request } = await op.publicClient.simulateContract(call);
+  // QIE's eth_estimateGas can answer intrinsic gas only (see GAS_FALLBACK in viem-ledger.ts): the first
+  // run on 27 Oct 2026 ran out of gas at 22,268. Twice the estimate, never under 200k.
+  const estimate = await op.publicClient.estimateContractGas(call);
+  const gas = estimate * 2n > 200_000n ? estimate * 2n : 200_000n;
+  const hash = await op.wallet.writeContract({ ...(request as object), gas } as never);
   const receipt = await op.publicClient.waitForTransactionReceipt({ hash });
   console.log(`${key.padEnd(20)} defined as "${BADGES[key].name}" (${receipt.status}, tx ${hash})`);
 }
