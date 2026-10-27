@@ -4,9 +4,11 @@
  * buttons themselves. Every call the bot makes to Telegram is intercepted and printed as a
  * transcript; with --chat <id>, the group's messages also go to that real Telegram group so a person
  * can watch the game there (DMs to the simulated players never leave this process).
- *   node --env-file=.env --import tsx bot/scripts/sim-telegram.ts [--scamshield | --theme horor] [--chat -100…] [--lang en]
+ *   node --env-file=.env --import tsx bot/scripts/sim-telegram.ts [--scamshield | --theme horor] [--chat -100…] [--lang en] [--out transcript.md]
+ * --out writes the whole conversation (every group message and DM, untruncated) as Markdown.
  * Uses BOT_TOKEN, the chain and GM settings from .env, a throwaway store, and short day timers.
  */
+import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createPublicClient, type Hex } from "viem";
@@ -22,6 +24,8 @@ const argv = process.argv.slice(2);
 const flag = (name: string) => (argv.includes(`--${name}`) ? (argv[argv.indexOf(`--${name}`) + 1] ?? "") : undefined);
 const lang = flag("lang") === "en" ? "en" : "id";
 const realChat = flag("chat") ? Number(flag("chat")) : null;
+const out = flag("out");
+const transcript: string[] = [];
 const mode = argv.includes("--scamshield") ? "scamshield" : (flag("theme") ?? "");
 
 const config = loadConfig();
@@ -61,10 +65,18 @@ bot.api.config.use(async (prev, method, payload, signal) => {
   if (method === "sendMessage" || method === "editMessageText") {
     const to = chat === GROUP ? "group" : chat;
     sent.push({ to, text: String(p.text), buttons });
+    const where = to === "group" ? "👥 Grup" : `✉️ DM ${nameOf.get(chat) ?? chat}`;
+    transcript.push(
+      `**${stamp().trim()} · ${where}${method === "editMessageText" ? " (diedit)" : ""}**\n\n${plain(String(p.text))
+        .split("\n")
+        .map((l) => `> ${l}`)
+        .join("\n")}${buttons.length ? `\n>\n> ${buttons.map((b) => `\`[${b.text}]\``).join(" ")}` : ""}\n`,
+    );
     const who = to === "group" ? "GROUP" : `DM ${nameOf.get(chat) ?? chat}`;
     console.log(`${stamp()} ${method === "editMessageText" ? "✎" : "→"} ${who}: ${plain(String(p.text)).replace(/\n+/g, " ⏎ ").slice(0, 400)}${buttons.length ? `  [${buttons.map((b) => b.text).join(" | ")}]` : ""}`);
   } else if (method === "answerCallbackQuery" && p.text) {
     console.log(`${stamp()}   ↳ toast: ${plain(String(p.text))}`);
+    transcript.push(`_${stamp().trim()} · toast: ${plain(String(p.text))}_\n`);
   }
   if (realChat !== null && chat === GROUP) {
     return prev(method, { ...payload, chat_id: realChat } as typeof payload, signal);
@@ -112,7 +124,9 @@ await until("the game to start", () => room.status !== "lobby");
 const role = (r: string) => players.map((p) => p.id).filter((id) => room.roleOf(id) === r && room.isAlive(id));
 const wolf = role("werewolf")[0]!;
 const victim = role("villager")[0]!;
-console.log(`\n${stamp()} (roles dealt: ${players.map((p) => `${p.name}=${room.roleOf(p.id)}`).join(", ")})\n`);
+const dealt = players.map((p) => `${p.name}=${room.roleOf(p.id)}`).join(", ");
+console.log(`\n${stamp()} (roles dealt: ${dealt})\n`);
+transcript.push(`_(peran dibagikan: ${dealt})_\n`);
 await tap(wolf, `n:${room.id}:1:${victim}`, { id: wolf, type: "private" });
 await tap(role("seer")[0]!, `n:${room.id}:1:${wolf}`, { id: role("seer")[0]!, type: "private" });
 await tap(role("doctor")[0]!, `n:${room.id}:1:${victim}`, { id: role("doctor")[0]!, type: "private" });
@@ -140,5 +154,10 @@ if (config.chain.network !== "off" && gameId && config.chain.gameAddress) {
   console.log(`\n${stamp()} on chain: game ${gameId} status ${["None", "Lobby", "Running", "Finalized", "Cancelled", "Disputed"][s] ?? s}`);
 }
 const dms = sent.filter((s) => s.to !== "group").length;
+if (out) {
+  const head = `# Nox playtest (simulasi): ${mode || "standar"}, ${lang}\n\nBot @${bot.botInfo.username}, game \`${gameId ?? "-"}\`, ${new Date().toISOString()}. Pemain simulasi: ${players.map((p) => p.name).join(", ")}.\n\n`;
+  writeFileSync(out, head + transcript.join("\n"));
+  console.log(`${stamp()} transcript written to ${out}`);
+}
 console.log(`${stamp()} done: ${sent.filter((s) => s.to === "group").length} group messages, ${dms} DMs, room ${room.status}`);
 process.exit(0);
