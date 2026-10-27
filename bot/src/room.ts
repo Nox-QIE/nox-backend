@@ -18,6 +18,7 @@ import { noLedger, type GameLedger, type LedgerNightReveal } from "./chain/ledge
 import { FREE_MAX_PLAYERS } from "./chain/passes.js";
 import { gmRef, scenarioRef } from "./content.js";
 import { chronicleFacts } from "./chronicle.js";
+import { DiscussionTally } from "./discussion.js";
 import { BADGES, rareMoments, type NightLogEntry } from "./moments.js";
 import { esc, roleName, T, type Lang } from "./i18n.js";
 import type { AgentRecord, Persona } from "./agents.js";
@@ -56,6 +57,7 @@ export interface RoomDeps {
   /**
    * Nudge a quiet discussion halfway through (F07-S02). "quiet" needs `canCountMessages` (the bot
    * reads group messages only with Telegram privacy mode off); "always" nudges once every discussion.
+   * `canCountMessages` also turns on the witness report when the vote opens (10.07 #1).
    */
   nudge?: "quiet" | "always";
   canCountMessages?: boolean;
@@ -86,6 +88,8 @@ export class GameRoom {
   private cancelTimer: (() => void) | null = null;
   private cancelNudge: (() => void) | null = null;
   private discussionMessages = 0;
+  /** Who spoke and who was named in this discussion, for the witness report (10.07 #1): counts only. */
+  private tally: DiscussionTally | null = null;
   /** Messages seen in each discussion and nudges sent: counts only, never the text (F07-D06). */
   private discussionLog: number[] = [];
   private nudgesSent = 0;
@@ -406,6 +410,8 @@ export class GameRoom {
     }
     this.phaseStep = "discussion";
     this.discussionMessages = 0;
+    const living = this.state!.seats.filter((id) => this.state!.players[id]!.alive);
+    this.tally = new DiscussionTally(living.map((id) => ({ id, name: this.players.get(Number(id)) ?? id })));
     await this.deps.messenger.sendGroup(this.chatId, this.t.discussion(Math.round(this.deps.timings.discussionMs / 1000)));
     this.schedule(this.deps.timings.discussionMs, () => this.openVote());
     const mode = this.deps.nudge === "quiet" && !this.deps.canCountMessages ? undefined : this.deps.nudge;
@@ -415,9 +421,14 @@ export class GameRoom {
     }
   }
 
-  /** A group message seen by the bot (only possible with Telegram privacy mode off). */
-  noteGroupMessage() {
-    if (this.phaseStep === "discussion") this.discussionMessages++;
+  /**
+   * A group message seen by the bot (only possible with Telegram privacy mode off). The text is read
+   * here once for the witness report's counts and not kept.
+   */
+  noteGroupMessage(userId?: number, text = "") {
+    if (this.phaseStep !== "discussion") return;
+    this.discussionMessages++;
+    if (userId !== undefined) this.tally?.note(String(userId), text);
   }
 
   private async maybeNudge(round: number, mode: "quiet" | "always") {
@@ -435,6 +446,14 @@ export class GameRoom {
     if (this.phaseStep !== "discussion") return;
     this.discussionLog.push(this.discussionMessages);
     this.phaseStep = "vote";
+    const tally = this.tally;
+    this.tally = null;
+    // The witness report: only when the bot could read the group and someone spoke.
+    if (this.deps.canCountMessages && this.narrator.witness && tally && tally.messages > 0) {
+      const w = tally.report();
+      const named = { mentioned: w.mentioned.map((m) => ({ name: esc(m.name), count: m.count })), talkative: w.talkative && esc(w.talkative), quiet: w.quiet.map(esc) };
+      await this.deps.messenger.sendGroup(this.chatId, await this.narrator.witness(publicView(this.state!, this.events), named));
+    }
     const s = this.state!;
     const alive = s.seats.filter((id) => s.players[id]!.alive);
     await this.deps.messenger.sendGroup(this.chatId, this.t.voteOpen(Math.round(this.deps.timings.voteMs / 1000)), this.targetKeyboard("v", alive));

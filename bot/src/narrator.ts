@@ -1,4 +1,5 @@
 import type { PublicView, Role, Team } from "@nox/shared/engine";
+import type { Witness } from "./discussion.js";
 import { roleName, teamName, type Lang } from "./i18n.js";
 
 /**
@@ -13,6 +14,8 @@ export interface Narrator {
   gameOver(winner: Team, roster: { name: string; role: Role }[]): Promise<string>;
   /** A prompt for a quiet discussion (F07-S02); never names a player. */
   nudge?(view: PublicView): Promise<string>;
+  /** The witness report when the vote opens (10.07 #1): counts from the discussion, names HTML-escaped. */
+  witness?(view: PublicView, w: Witness): Promise<string>;
   /** Called once when the game ends or is cancelled (e.g. to report LLM usage). */
   finish?(): NarratorReport | void;
 }
@@ -119,5 +122,18 @@ export class TemplateNarrator implements Narrator {
   async nudge(view: PublicView) {
     const lines = NUDGES[this.lang];
     return lines[(view.round - 1) % lines.length]!;
+  }
+
+  async witness(_view: PublicView, w: Witness) {
+    const id = this.lang === "id";
+    const lines = [id ? "👁 <b>Laporan Saksi</b>" : "👁 <b>Witness report</b>"];
+    if (w.mentioned.length) {
+      const list = w.mentioned.map((m) => `${m.name} (${m.count}×)`).join(", ");
+      lines.push(id ? `• Paling sering disebut: ${list}` : `• Named most: ${list}`);
+    }
+    if (w.talkative) lines.push(id ? `• Paling banyak bicara: ${w.talkative}` : `• Spoke the most: ${w.talkative}`);
+    if (w.quiet.length) lines.push(id ? `• Diam sepanjang diskusi: ${w.quiet.join(", ")}` : `• Silent the whole discussion: ${w.quiet.join(", ")}`);
+    if (lines.length === 1) lines.push(id ? "• Semua bicara, tidak ada yang menonjol." : "• Everyone spoke; nobody stood out.");
+    return lines.join("\n");
   }
 }

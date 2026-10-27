@@ -122,6 +122,8 @@ Kebijakan data penyedia LLM (training, retensi; Anthropic `verified`, Oxion `unv
 
 Saat diskusi sepi, Game Master melempar satu pertanyaan terbuka di tengah waktu diskusi (tanpa menyebut atau mengarah ke siapa pun; guard tetap berlaku, template sebagai cadangan). `NOX_DISCUSSION_NUDGE=quiet` (default) hanya bekerja bila bot bisa membaca pesan grup (BotFather → Group Privacy → Disable): pancingan muncul bila pesan masih lebih sedikit dari jumlah pemain hidup. `always` = sekali tiap diskusi, `off` = mati. Pesan grup hanya dihitung, tidak disimpan atau dibaca lebih jauh.
 
+**Witness report (10.07 #1).** Saat voting dibuka, Game Master membacakan "Laporan Saksi": siapa paling sering disebut, siapa paling banyak bicara, siapa diam. Bot membaca tiap pesan grup sekali di memori, menambah hitungan, lalu membuangnya; teks tidak disimpan dan tidak dikirim ke AI, hanya nama dan angka. Butuh Group Privacy dimatikan; tanpa itu laporan tidak muncul.
+
 ## Uji di testnet
 
 `npm run sim:game` memainkan satu game 5 pemain lewat GameRoom + ViemLedger asli di chain `.env` (tanpa Telegram) dan mencetak status on-chain, credits per pemain, dan gas per langkah. `npm run sim:game -- --scamshield` memainkan mode Scam Shield; bila grup menang, lencana Scam Spotter diberikan di NoxBadges (`NOX_BADGES_ADDRESS`) dan jumlahnya per pemain dicetak.
