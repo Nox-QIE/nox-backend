@@ -5,6 +5,7 @@ import type { Hex } from "viem";
 import { blobVersion, open as openBlob, seal as sealBlob, type StoreKeyring } from "./store-keys.js";
 import { AGENT_TERMS, type AgentRecord, type Persona } from "./agents.js";
 import type { Booking, BookingStatus } from "./bookings.js";
+import type { ChronicleRow } from "./chronicle.js";
 import type { ClientTheme } from "./client-themes.js";
 import type { LedgerNightReveal, LedgerRoleReveal } from "./chain/ledger.js";
 import type { TxRecord } from "./chain/viem-ledger.js";
@@ -99,6 +100,13 @@ export interface Store {
   purgeSettledSecrets(beforeMs: number): number;
   /** Right to erasure for off-chain data: forget a player who pressed Start and unlink them as host. */
   forgetUser(userId: number): void;
+  /** Chronicle (10.07 #2): one row per player per finished game, per group. */
+  recordChronicle(rows: ChronicleRow[]): void;
+  chronicleOf(chatId: number): ChronicleRow[];
+  /** Groups with a game finished in [fromMs, toMs). */
+  chronicleChats(fromMs: number, toMs: number): number[];
+  /** Whether the weekly recap went out; marking returns false if it already had. */
+  markRecap(chatId: number, week: string): boolean;
   /** Daily Night Watch (10.07 #7): one answer per user and UTC day. */
   nightWatchAnswer(userId: number, day: string): { correct: boolean } | null;
   recordNightWatch(userId: number, day: string, correct: boolean): void;
@@ -353,6 +361,20 @@ export class SqliteStore implements Store {
         template INTEGER NOT NULL,
         at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS chronicle (
+        chat_id INTEGER NOT NULL,
+        game_id TEXT NOT NULL,
+        ended_at INTEGER NOT NULL,
+        player TEXT NOT NULL,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        won INTEGER NOT NULL,
+        voted_out INTEGER NOT NULL,
+        killed INTEGER NOT NULL,
+        lang TEXT NOT NULL DEFAULT 'id',
+        PRIMARY KEY (chat_id, game_id, player)
+      );
+      CREATE TABLE IF NOT EXISTS chronicle_recaps (chat_id INTEGER NOT NULL, week TEXT NOT NULL, PRIMARY KEY (chat_id, week));
       CREATE TABLE IF NOT EXISTS night_watch (user_id INTEGER NOT NULL, day TEXT NOT NULL, correct INTEGER NOT NULL, PRIMARY KEY (user_id, day));
       CREATE TABLE IF NOT EXISTS practice_stats (day TEXT PRIMARY KEY, started INTEGER NOT NULL DEFAULT 0, finished INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS agent_games (
@@ -714,6 +736,36 @@ export class SqliteStore implements Store {
     return (this.db.prepare("SELECT * FROM client_themes ORDER BY key").all() as Record<string, string | number>[]).map((r) => this.toClientTheme(r));
   }
 
+  recordChronicle(rows: ChronicleRow[]) {
+    const insert = this.db.prepare(
+      "INSERT OR IGNORE INTO chronicle (chat_id, game_id, ended_at, player, name, role, won, voted_out, killed, lang) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    );
+    for (const r of rows) insert.run(r.chatId, r.gameId, r.endedAt, r.player.toLowerCase(), r.name, r.role, r.won ? 1 : 0, r.votedOut ? 1 : 0, r.killed ? 1 : 0, r.lang);
+  }
+
+  chronicleOf(chatId: number): ChronicleRow[] {
+    return (this.db.prepare("SELECT * FROM chronicle WHERE chat_id = ? ORDER BY ended_at").all(chatId) as Record<string, string | number>[]).map((r) => ({
+      chatId: Number(r.chat_id),
+      gameId: String(r.game_id),
+      endedAt: Number(r.ended_at),
+      player: String(r.player),
+      name: String(r.name),
+      role: r.role as ChronicleRow["role"],
+      won: r.won === 1,
+      votedOut: r.voted_out === 1,
+      killed: r.killed === 1,
+      lang: (r.lang as ChronicleRow["lang"]) ?? "id",
+    }));
+  }
+
+  chronicleChats(fromMs: number, toMs: number): number[] {
+    return (this.db.prepare("SELECT DISTINCT chat_id FROM chronicle WHERE ended_at >= ? AND ended_at < ?").all(fromMs, toMs) as { chat_id: number }[]).map((r) => Number(r.chat_id));
+  }
+
+  markRecap(chatId: number, week: string) {
+    return Number(this.db.prepare("INSERT OR IGNORE INTO chronicle_recaps (chat_id, week) VALUES (?, ?)").run(chatId, week).changes) > 0;
+  }
+
   nightWatchAnswer(userId: number, day: string) {
     const r = this.db.prepare("SELECT correct FROM night_watch WHERE user_id = ? AND day = ?").get(userId, day) as { correct: number } | undefined;
     return r ? { correct: r.correct === 1 } : null;
@@ -738,6 +790,8 @@ export class SqliteStore implements Store {
     if (u?.address) this.audit(u.address, "forgotten", "account deleted with /forget");
     this.db.prepare("DELETE FROM users WHERE telegram_id = ?").run(userId);
     this.db.prepare("DELETE FROM night_watch WHERE user_id = ?").run(userId);
+    // The Chronicle names the player in their groups' history: that goes too.
+    this.db.prepare("DELETE FROM chronicle WHERE player = ? OR player = ?").run((u?.address ?? "").toLowerCase(), `local:${userId}`);
     // Settlement only needs to know that one host ran several games, not who: keep a stable stand-in.
     this.db.prepare("UPDATE finished_games SET host_id = -abs(host_id) WHERE host_id = ?").run(userId);
   }

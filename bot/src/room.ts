@@ -17,6 +17,7 @@ import type { Hex } from "viem";
 import { noLedger, type GameLedger, type LedgerNightReveal } from "./chain/ledger.js";
 import { FREE_MAX_PLAYERS } from "./chain/passes.js";
 import { gmRef, scenarioRef } from "./content.js";
+import { chronicleFacts } from "./chronicle.js";
 import { BADGES, rareMoments, type NightLogEntry } from "./moments.js";
 import { esc, roleName, T, type Lang } from "./i18n.js";
 import type { AgentRecord, Persona } from "./agents.js";
@@ -136,6 +137,11 @@ export class GameRoom {
     const next = this.queue.then(fn, fn);
     this.queue = next.catch(() => undefined);
     return next;
+  }
+
+  /** The player in the Chronicle: their game wallet, or a local id when there is no chain. */
+  private playerKey(userId: number): string {
+    return this.ledger.addressOf(userId)?.toLowerCase() ?? `local:${userId}`;
   }
 
   private name(userId: number | string): string {
@@ -263,6 +269,10 @@ export class GameRoom {
 
     const view = publicView(this.state, this.events);
     await this.deps.messenger.sendGroup(this.chatId, await this.narrator.intro(view, ids.map((id) => this.name(id))));
+    // Chronicle (10.07 #2): the group's own history, when it has one.
+    const history = this.deps.store?.chronicleOf(this.chatId) ?? [];
+    const facts = chronicleFacts(history, ids.map((id) => this.playerKey(Number(id))), this.lang);
+    if (facts.length) await this.deps.messenger.sendGroup(this.chatId, `📜 <b>Chronicle</b>\n${facts.map((f) => `• ${f}`).join("\n")}`);
     await this.startNight();
   }
 
@@ -501,6 +511,28 @@ export class GameRoom {
     let over = await this.narrator.gameOver(ended.winner, roster);
     if (this.gameId && this.deps.webUrl) over += `\n\n${this.t.verifyLink(`${this.deps.webUrl.replace(/\/+$/, "")}/game/?id=${this.gameId}`)}`;
     await this.deps.messenger.sendGroup(this.chatId, over);
+    // Chronicle (10.07 #2): one row per player for this group's history.
+    const outs = (type: "night_resolved" | "day_resolved") =>
+      new Set(this.events.flatMap((e) => (e.type === type && e.eliminated ? [e.eliminated] : [])));
+    const votedOut = outs("day_resolved");
+    const killed = outs("night_resolved");
+    this.deps.store?.recordChronicle(
+      this.state!.seats.map((id) => {
+        const role = ended.roles[id]!;
+        return {
+          chatId: this.chatId,
+          gameId: this.gameId ?? `${this.id}-${Date.now()}`,
+          endedAt: Date.now(),
+          player: this.playerKey(Number(id)),
+          name: this.players.get(Number(id)) ?? id,
+          role,
+          won: (role === "werewolf" ? "wolves" : "village") === ended.winner,
+          votedOut: votedOut.has(id),
+          killed: killed.has(id),
+          lang: this.lang,
+        };
+      }),
+    );
     // Rare moments (10.07 #4): announced in the group and awarded on NoxBadges once the game is final.
     const s = this.state!;
     const moments = rareMoments({

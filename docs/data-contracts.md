@@ -16,6 +16,7 @@ Commands:
 | `/latihan`, `/practice` | anyone, private chat | – | Scam Shield practice quiz |
 | `/privacy`, `/privasi` | anyone | – | privacy notice |
 | `/web`, `/masuk` | player, private chat | – | a one-time web sign-in link for the player's game wallet: `<NOX_WEB_URL>/login/#t=<token>`. It lives 10 minutes and works once; the token sits in the URL fragment, so it never reaches a server log (NOX-APP-14) |
+| `/chronicle` | anyone, group | – | the group's Chronicle: games played, top players by wins, slyest werewolf (10.07 #2). A recap of last week goes to each group that played, on Mondays (UTC) |
 | `/nightwatch`, `/ronda` | anyone, private chat | – | today's Daily Night Watch puzzle (4 suspects, 3 clues, one answer per UTC day; same puzzle for everyone, built from the date) |
 | `/negara`, `/country` | player, private chat | two-letter country code, e.g. `/negara ID` | sets the account's country, used only to pick the payment rail (Indonesia: rupiah invoice; elsewhere: QIE/QUSDC on chain). The first guess comes from the Telegram language |
 | `/forget`, `/lupakan` | player | confirmed with the `f:yes` button | deletes the account (right to erasure) |
