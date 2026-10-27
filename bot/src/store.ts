@@ -99,6 +99,10 @@ export interface Store {
   purgeSettledSecrets(beforeMs: number): number;
   /** Right to erasure for off-chain data: forget a player who pressed Start and unlink them as host. */
   forgetUser(userId: number): void;
+  /** Daily Night Watch (10.07 #7): one answer per user and UTC day. */
+  nightWatchAnswer(userId: number, day: string): { correct: boolean } | null;
+  recordNightWatch(userId: number, day: string, correct: boolean): void;
+  nightWatchStreak(userId: number, day: string): number;
   /** `termsVersion`: the agent terms version the owner accepted (AGENT_TERMS). */
   addAgent(owner: string, persona: Persona, termsVersion: number): number;
   /** An agent backed by its owner's https service; `secret` signs Nox's requests and is stored encrypted. */
@@ -349,6 +353,7 @@ export class SqliteStore implements Store {
         template INTEGER NOT NULL,
         at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS night_watch (user_id INTEGER NOT NULL, day TEXT NOT NULL, correct INTEGER NOT NULL, PRIMARY KEY (user_id, day));
       CREATE TABLE IF NOT EXISTS practice_stats (day TEXT PRIMARY KEY, started INTEGER NOT NULL DEFAULT 0, finished INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS agent_games (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -709,11 +714,30 @@ export class SqliteStore implements Store {
     return (this.db.prepare("SELECT * FROM client_themes ORDER BY key").all() as Record<string, string | number>[]).map((r) => this.toClientTheme(r));
   }
 
+  nightWatchAnswer(userId: number, day: string) {
+    const r = this.db.prepare("SELECT correct FROM night_watch WHERE user_id = ? AND day = ?").get(userId, day) as { correct: number } | undefined;
+    return r ? { correct: r.correct === 1 } : null;
+  }
+
+  recordNightWatch(userId: number, day: string, correct: boolean) {
+    this.db.prepare("INSERT OR IGNORE INTO night_watch (user_id, day, correct) VALUES (?, ?, ?)").run(userId, day, correct ? 1 : 0);
+  }
+
+  nightWatchStreak(userId: number, day: string) {
+    let streak = 0;
+    for (let d = new Date(`${day}T00:00:00Z`); ; d = new Date(d.getTime() - 86_400_000)) {
+      const r = this.nightWatchAnswer(userId, d.toISOString().slice(0, 10));
+      if (!r?.correct) return streak;
+      streak++;
+    }
+  }
+
   forgetUser(userId: number) {
     const u = this.db.prepare("SELECT address FROM users WHERE telegram_id = ?").get(userId) as { address: string | null } | undefined;
     // The wallet and its history stay on chain; the audit keeps that the account behind it was deleted.
     if (u?.address) this.audit(u.address, "forgotten", "account deleted with /forget");
     this.db.prepare("DELETE FROM users WHERE telegram_id = ?").run(userId);
+    this.db.prepare("DELETE FROM night_watch WHERE user_id = ?").run(userId);
     // Settlement only needs to know that one host ran several games, not who: keep a stable stand-in.
     this.db.prepare("UPDATE finished_games SET host_id = -abs(host_id) WHERE host_id = ?").run(userId);
   }

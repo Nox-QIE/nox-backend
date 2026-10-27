@@ -16,6 +16,7 @@ Commands:
 | `/latihan`, `/practice` | anyone, private chat | – | Scam Shield practice quiz |
 | `/privacy`, `/privasi` | anyone | – | privacy notice |
 | `/web`, `/masuk` | player, private chat | – | a one-time web sign-in link for the player's game wallet: `<NOX_WEB_URL>/login/#t=<token>`. It lives 10 minutes and works once; the token sits in the URL fragment, so it never reaches a server log (NOX-APP-14) |
+| `/nightwatch`, `/ronda` | anyone, private chat | – | today's Daily Night Watch puzzle (4 suspects, 3 clues, one answer per UTC day; same puzzle for everyone, built from the date) |
 | `/negara`, `/country` | player, private chat | two-letter country code, e.g. `/negara ID` | sets the account's country, used only to pick the payment rail (Indonesia: rupiah invoice; elsewhere: QIE/QUSDC on chain). The first guess comes from the Telegram language |
 | `/forget`, `/lupakan` | player | confirmed with the `f:yes` button | deletes the account (right to erasure) |
 
@@ -30,6 +31,7 @@ Button callback data, at most 64 bytes as Telegram requires. `<room>` is the lob
 | `v:<room>:<round>:<target>` | living player | day vote |
 | `q:<item>:<s\|k>` | anyone in the practice quiz | answer: scam (`s`) or safe (`k`) |
 | `f:yes` | player | confirm `/forget` |
+| `w:<day>:<suspect>` | anyone in the Night Watch puzzle | answer of the day (0–3); later taps or another day's buttons are refused |
 | `g:<booking>` | anyone in the booked group, at the booked time | open a paid Game Night lobby as its host (first 32 hex digits of the booking id) |
 
 Text messages:
