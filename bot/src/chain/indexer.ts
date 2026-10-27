@@ -660,7 +660,7 @@ export interface PassPurchase {
   ts: number;
 }
 
-const ROLE_NAMES: Record<number, string> = { 1: "villager", 2: "werewolf", 3: "seer", 4: "doctor", 5: "hunter", 6: "witch" };
+const ROLE_NAMES: Record<number, string> = { 1: "villager", 2: "werewolf", 3: "seer", 4: "doctor", 5: "hunter", 6: "witch", 7: "cupid" };
 
 /** D7: a player's mirror of on-chain credits and their stats. */
 export interface PlayerStats {

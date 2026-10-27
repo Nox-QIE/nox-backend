@@ -5,7 +5,7 @@
  * transcript; with --chat <id>, the group's messages also go to that real Telegram group so a person
  * can watch the game there (DMs to the simulated players never leave this process).
  *   node --env-file=.env --import tsx bot/scripts/sim-telegram.ts [--scamshield | --theme horor | --extended] [--chat -100…] [--lang en] [--out transcript.md]
- * --extended plays 8 players with the hunter and the witch (needs NOX_EXTENDED_ROLES=on and a NoxGame that accepts them).
+ * --extended plays 8 players with the hunter, cupid and the witch (needs NOX_EXTENDED_ROLES=on and a NoxGame that accepts them).
  * --out writes the whole conversation (every group message and DM, untruncated) as Markdown.
  * Uses BOT_TOKEN, the chain and GM settings from .env, a throwaway store, and short day timers.
  */
@@ -137,8 +137,10 @@ const dealt = players.map((p) => `${p.name}=${room.roleOf(p.id)}`).join(", ");
 console.log(`\n${stamp()} (roles dealt: ${dealt})\n`);
 transcript.push(`_(peran dibagikan: ${dealt})_\n`);
 if (extended) {
-  // The wolves take the hunter, the witch keeps her potions, the hunter shoots a wolf at dawn.
+  // Cupid links to the seer, the wolves take the hunter, the witch keeps her potions, the hunter
+  // shoots a wolf at dawn.
   const hunter = role("hunter")[0]!;
+  await tap(role("cupid")[0]!, `n:${room.id}:1:${role("seer")[0]}`, { id: role("cupid")[0]!, type: "private" });
   await tap(role("witch")[0]!, `n:${room.id}:1:0:x`, { id: role("witch")[0]!, type: "private" });
   for (const w of role("werewolf")) await tap(w, `n:${room.id}:1:${hunter}`, { id: w, type: "private" });
   await tap(role("seer")[0]!, `n:${room.id}:1:${wolf}`, { id: role("seer")[0]!, type: "private" });

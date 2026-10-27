@@ -11,7 +11,7 @@ import type { Wording } from "./narrator.js";
 export interface ScenarioText {
   title: string;
   /** Names of the classic roles; scenarios never deal the extended ones. */
-  roles: Record<Exclude<Role, "hunter" | "witch">, string> & Partial<Record<Role, string>>;
+  roles: Record<Exclude<Role, "hunter" | "witch" | "cupid">, string> & Partial<Record<Role, string>>;
   teams: Record<Team, string>;
   wording: Wording;
   /** One warning sign posted each morning, in order. */
