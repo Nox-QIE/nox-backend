@@ -7,6 +7,7 @@ import { chainFor, rpcTransport, ViemLedger, type PlayerReward, type ViemLedgerO
 import { HOST_PASS, PassReader, type PassClient } from "./chain/passes.js";
 import { countryGuess, parseCountry, payRail, type PayRail } from "./pay-rail.js";
 import { LOGIN_TTL_S, loginLink, loginToken } from "./login.js";
+import { answerNightWatch, startNightWatch } from "./nightwatch.js";
 import { GameNights } from "./gamenight.js";
 import { Practice, PRACTICE, PRACTICE_PAYLOADS, practiceLink } from "./practice.js";
 import { AlertMonitor } from "./alerts.js";
@@ -404,6 +405,13 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
   const nightsTick = () => void gameNights.tick().catch((e) => logLine({ event: "gamenight_error", error: e instanceof Error ? e.message : String(e) }));
   setInterval(nightsTick, 60_000).unref();
   nightsTick();
+  // Daily Night Watch (10.07 #7): today's puzzle in a private chat.
+  bot.command(["nightwatch", "ronda"], async (ctx) => {
+    if (ctx.chat.type !== "private" || !ctx.from) return;
+    const lang = langFrom(ctx.from.language_code);
+    const r = startNightWatch(store, ctx.from.id, lang);
+    await ctx.reply(r.text, opts(r.keyboard));
+  });
   bot.command(["latihan", "practice"], async (ctx) => {
     const lang = langFrom(ctx.from?.language_code);
     await ctx.reply(PRACTICE[lang].groupLink(practiceLink(bot.botInfo.username, lang)), { link_preview_options: { is_disabled: true } });
@@ -455,9 +463,17 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
   });
 
   // Callback data: j:<room> | s:<room> | a:<room>:<agentId> | n:<room>:<round>:<target> | v:<room>:<round>:<target>
-  // | q:<item>:<s|k> (practice) | f:yes (forget) | g:<booking> (open a booked Game Night)
+  // | q:<item>:<s|k> (practice) | f:yes (forget) | g:<booking> (open a booked Game Night) | w:<day>:<suspect> (Night Watch)
   bot.on("callback_query:data", async (ctx) => {
     const [kind, roomId, roundStr, target] = ctx.callbackQuery.data.split(":");
+    if (kind === "w") {
+      // w:<day>:<suspect>, one answer per day; the buttons go away once answered.
+      const text = answerNightWatch(store, ctx.from.id, roomId ?? "", Number(roundStr), langFrom(ctx.from.language_code));
+      await ctx.answerCallbackQuery();
+      await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() }).catch(() => undefined);
+      await ctx.reply(text, { parse_mode: "HTML" });
+      return;
+    }
     if (kind === "q") {
       const next = practice.answer(ctx.from.id, Number(roomId), roundStr === "s" ? "s" : "k");
       if (!next) return void (await ctx.answerCallbackQuery({ text: stripTags(T[langFrom(ctx.from.language_code)].stale) }));

@@ -16,6 +16,7 @@ await bot.api.setMyCommands([
   { command: "forget", description: "Delete your off-chain data (in a private chat with the bot)" },
   { command: "pass", description: "Your Host Pass and game wallet (in a private chat with the bot)" },
   { command: "latihan", description: "A 3-minute Scam Shield practice to share with family" },
+  { command: "nightwatch", description: "Daily Night Watch: a one-minute werewolf puzzle" },
 ]);
 
 const allowed_updates = ["message", "callback_query"] as const;

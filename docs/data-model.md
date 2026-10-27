@@ -8,7 +8,7 @@ The design (vault 10.04, DFD level 1) plans data stores D1–D16 in Postgres. Th
 
 | Design store | As built | Fields | Protection | Retention |
 |---|---|---|---|---|
-| D1 Player account | bot `users` | telegram_id (PK), locale, address (derived wallet, unique), status, started_at, last_seen, country (payment rail only: guessed from the language, set with `/negara`) | none needed (no keys) | until `/forget` |
+| D1 Player account | bot `users` | telegram_id (PK), locale, address (derived wallet, unique), status, started_at, last_seen, country (payment rail only: guessed from the language, set with `/negara`); bot `night_watch` (telegram id, day, right/wrong) for the Night Watch streak | none needed (no keys) | until `/forget` |
 | D1 Wallet audit | bot `wallet_audit`; gas drips come from `chain_txs`; read with `npm run wallet:audit` | address, event (`created` / `forgotten`), detail, at | no Telegram id, no key material | kept (addresses are public on chain) |
 | D2 Keystore | **none**: wallets are derived with HKDF from `NOX_WALLET_SECRET` and the Telegram id (ADR-002) | – | the secret lives in env only | – |
 | D3 Game session | live state in `GameRoom` memory; bot `games` (game_id, chat_id, lang, status) for recovery; chain `GameCreated(configHash)`, `RolesCommitted`, `RoundRecorded`, `GameFinalized/Cancelled/Disputed` | | | `games` rows deleted 30 days after settle (disputed: kept) |
