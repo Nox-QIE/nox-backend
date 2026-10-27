@@ -10,7 +10,7 @@ const USERS = [11, 22, 33, 44, 55, 66, 77, 88];
 const nameOf = (u: number | undefined) => (u === 11 ? "Ava" : `P${u}`);
 
 /** An 8-player extended game, night 1 started; the ledger records every call in order. */
-async function extendedGame(opts: { players?: number } = {}) {
+async function extendedGame(opts: { players?: number; link?: boolean } = {}) {
   const messenger = new FakeMessenger();
   const scheduler = new FakeScheduler();
   const calls: string[] = [];
@@ -39,6 +39,8 @@ async function extendedGame(opts: { players?: number } = {}) {
   for (const u of users.slice(1)) await registry.join(room.id, u, `P${u}`);
   await room.start(11);
   const role = (r: string) => users.filter((u) => room.roleOf(u) === r && room.isAlive(u));
+  // Cupid (7+ players) links to the seer, who survives every scenario below, unless a test links itself.
+  if (opts.link !== false && role("cupid").length) await room.nightAction(role("cupid")[0]!, 1, String(role("seer")[0]));
   return { room, messenger, scheduler, calls, role, users };
 }
 
@@ -158,7 +160,7 @@ describe("extended roles in the bot (10.07 #5)", () => {
     expect(room.isAlive(w1!)).toBe(false);
     expect(messenger.group().some((m) => m.startsWith(`🏹 ${nameOf(hunter)} shoots <b>${nameOf(w1)}</b>`))).toBe(true);
     expect(messenger.group().at(-1)).toMatch(/discuss/i);
-    expect(calls.filter((c) => c.startsWith("commit:1:"))).toHaveLength(5); // 2 wolves, seer, doctor, the shot
+    expect(calls.filter((c) => c.startsWith("commit:1:"))).toHaveLength(6); // 2 wolves, seer, doctor, cupid, the shot
     expect(calls.at(-1)).toBe(`commit:1:${hunter}`);
   });
 
@@ -191,5 +193,25 @@ describe("extended roles in the bot (10.07 #5)", () => {
     await room.shoot(hunter, 1, String(wolf));
     expect(room.status).toBe("ended");
     expect(calls.at(-1)!.split(":")[1]!.split(",").map(Number).sort()).toEqual([ACTION_CODE.kill, ACTION_CODE.inspect, ACTION_CODE.protect, ACTION_CODE.shoot]);
+  });
+
+  it("cupid links on night 1, both lovers learn it, and a broken heart follows a death", async () => {
+    const { room, messenger, role } = await extendedGame({ link: false });
+    const cupid = role("cupid")[0]!;
+    const lover = role("villager")[0]!;
+    const [w1, w2] = role("werewolf");
+    expect(messenger.dms(cupid).some((m) => m.html.includes("Choose one player to be your lover"))).toBe(true);
+    expect((await room.nightAction(cupid, 1, String(cupid))).ok).toBe(false); // not themself
+    await room.nightAction(cupid, 1, String(lover));
+    await room.nightAction(role("witch")[0]!, 1, "0", "x");
+    await room.nightAction(w1!, 1, String(lover));
+    await room.nightAction(w2!, 1, String(lover));
+    await room.nightAction(role("seer")[0]!, 1, String(w1));
+    await room.nightAction(role("doctor")[0]!, 1, String(role("doctor")[0]));
+    expect(messenger.dms(cupid).at(-1)!.html).toContain(`You and <b>${nameOf(lover)}</b> are now lovers`);
+    expect(messenger.dms(lover).at(-1)!.html).toContain(`You and <b>${nameOf(cupid)}</b> are now lovers`);
+    expect(room.isAlive(lover)).toBe(false);
+    expect(room.isAlive(cupid)).toBe(false);
+    expect(messenger.group().some((m) => m.startsWith(`💔 ${nameOf(cupid)} cannot live without their lover`) && m.includes("Cupid"))).toBe(true);
   });
 });

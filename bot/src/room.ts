@@ -75,7 +75,7 @@ export interface Reply {
   text?: string;
 }
 
-const NIGHT_ROLES: ReadonlySet<Role> = new Set<Role>(["werewolf", "seer", "doctor", "witch"]);
+const NIGHT_ROLES: ReadonlySet<Role> = new Set<Role>(["werewolf", "seer", "doctor", "witch", "cupid"]);
 
 /** One game in one Telegram group, from lobby to the end. All mutations run through a queue. */
 export class GameRoom {
@@ -292,7 +292,7 @@ export class GameRoom {
     for (const a of this.assignments) {
       const mates = a.role === "werewolf" ? wolves.filter((w) => w !== a.id).map((w) => this.name(w)) : [];
       let text = this.t.yourRole(this.roleLabel(a.role), mates);
-      if (a.role === "hunter" || a.role === "witch") text += `\n${this.t.roleHelp[a.role]}`;
+      if (a.role === "hunter" || a.role === "witch" || a.role === "cupid") text += `\n${this.t.roleHelp[a.role]}`;
       const secret = this.secrets.get(Number(a.id));
       if (secret) text += `\n\n${this.t.roleProof(secret.salt)}`;
       await this.deps.messenger.sendDM(Number(a.id), text);
@@ -365,13 +365,13 @@ export class GameRoom {
         }
         continue;
       }
-      if (!NIGHT_ROLES.has(role)) continue;
+      if (!NIGHT_ROLES.has(role) || (role === "cupid" && state.round !== 1)) continue;
       const targets = alive.filter((t) => {
         if (role === "werewolf") return state.players[t]!.role !== "werewolf";
-        if (role === "seer") return t !== id;
+        if (role === "seer" || role === "cupid") return t !== id;
         return true;
       });
-      const prompt = role === "werewolf" ? this.t.pickKill : role === "seer" ? this.t.pickInspect : this.t.pickProtect;
+      const prompt = role === "werewolf" ? this.t.pickKill : role === "seer" ? this.t.pickInspect : role === "cupid" ? this.t.pickLink : this.t.pickProtect;
       await this.deps.messenger.sendDM(Number(id), prompt, this.targetKeyboard("n", targets));
     }
     this.schedule(this.deps.timings.nightMs, () => this.endNight());
@@ -439,6 +439,8 @@ export class GameRoom {
       const p = s.players[id]!;
       // A witch with no potion left has nothing to do; otherwise she acts or passes.
       if (p.role === "witch" && (s.potionsUsed[id] ?? []).length === 2) return true;
+      // Cupid acts on the first night only.
+      if (p.role === "cupid" && s.round !== 1) return true;
       return !p.alive || !NIGHT_ROLES.has(p.role) || Boolean(s.nightActions[id]) || this.witchPassed.has(id);
     });
   }
@@ -452,20 +454,30 @@ export class GameRoom {
       if (e.type === "inspection_result") {
         await this.deps.messenger.sendDM(Number(e.seer), this.t.inspection(this.name(e.target), e.isWerewolf));
       }
+      if (e.type === "lovers_linked") {
+        const [a, b] = e.lovers;
+        await this.deps.messenger.sendDM(Number(a), this.t.loversLinked(this.name(b)));
+        await this.deps.messenger.sendDM(Number(b), this.t.loversLinked(this.name(a)));
+      }
     }
     const resolved = evs.find((e) => e.type === "night_resolved");
     if (resolved?.type === "night_resolved") {
       const name = resolved.eliminated ? this.name(resolved.eliminated) : null;
       await this.deps.messenger.sendGroup(this.chatId, await this.narrator.morning(publicView(this.state!, this.events), name, resolved.revealedRole));
     }
-    for (const e of evs) {
-      if (e.type === "player_died" && e.cause === "poison") {
-        await this.deps.messenger.sendGroup(this.chatId, this.t.poisonDeath(this.name(e.id), e.revealedRole && this.roleLabel(e.revealedRole)));
-      }
-    }
+    await this.announceDeaths(evs);
     if (await this.hunterStep(evs)) return;
     if (await this.finishIfEnded(evs)) return;
     await this.startDay();
+  }
+
+  /** Deaths besides the night's victim and the day's exile: poison and broken hearts. */
+  private async announceDeaths(evs: GameEvent[]) {
+    for (const e of evs) {
+      if (e.type !== "player_died" || e.cause === "shot") continue;
+      const role = e.revealedRole && this.roleLabel(e.revealedRole);
+      await this.deps.messenger.sendGroup(this.chatId, e.cause === "poison" ? this.t.poisonDeath(this.name(e.id), role) : this.t.heartbreakDeath(this.name(e.id), role));
+    }
   }
 
   private async startDay() {
@@ -561,6 +573,7 @@ export class GameRoom {
       const name = resolved.eliminated ? this.name(resolved.eliminated) : null;
       await this.deps.messenger.sendGroup(this.chatId, await this.narrator.dayResult(publicView(this.state!, this.events), name, resolved.revealedRole));
     }
+    await this.announceDeaths(evs);
     if (await this.hunterStep(evs)) return;
     if (await this.finishIfEnded(evs)) return;
     await this.startNight();
@@ -602,11 +615,12 @@ export class GameRoom {
     if (shot) this.commitNight(shot.userId, round, "shoot", Number(shot.target));
     if (this.gameId && this.pendingDayResult) this.ledger.recordRound(this.gameId, this.pendingDayResult.round, this.pendingDayResult.hash);
     this.pendingDayResult = null;
-    const died = evs.find((e) => e.type === "player_died");
+    const died = evs.find((e) => e.type === "player_died" && e.cause === "shot");
     await this.deps.messenger.sendGroup(
       this.chatId,
       died?.type === "player_died" ? this.t.hunterShot(this.name(hunter), this.name(died.id), died.revealedRole && this.roleLabel(died.revealedRole)) : this.t.hunterPassed(this.name(hunter)),
     );
+    await this.announceDeaths(evs);
     if (!(await this.finishIfEnded(evs))) await (this.state!.phase === "day" ? this.startDay() : this.startNight());
     return shot ? { ok: true, text: this.t.actionOk(this.name(shot.target)) } : { ok: true };
   }

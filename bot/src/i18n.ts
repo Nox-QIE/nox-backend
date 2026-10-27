@@ -8,8 +8,8 @@ export const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;")
 export const unesc = (s: string) => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 
 const ROLE: Record<Lang, Record<Role, string>> = {
-  id: { werewolf: "🐺 Werewolf", seer: "🔮 Seer", doctor: "🩺 Doctor", villager: "🧑‍🌾 Warga", hunter: "🏹 Hunter", witch: "🧪 Witch" },
-  en: { werewolf: "🐺 Werewolf", seer: "🔮 Seer", doctor: "🩺 Doctor", villager: "🧑‍🌾 Villager", hunter: "🏹 Hunter", witch: "🧪 Witch" },
+  id: { werewolf: "🐺 Werewolf", seer: "🔮 Seer", doctor: "🩺 Doctor", villager: "🧑‍🌾 Warga", hunter: "🏹 Hunter", witch: "🧪 Witch", cupid: "💘 Cupid" },
+  en: { werewolf: "🐺 Werewolf", seer: "🔮 Seer", doctor: "🩺 Doctor", villager: "🧑‍🌾 Villager", hunter: "🏹 Hunter", witch: "🧪 Witch", cupid: "💘 Cupid" },
 };
 
 const TEAM: Record<Lang, Record<Team, string>> = {
@@ -85,7 +85,10 @@ type Dict = {
   rolesLine: (extended: boolean) => string;
   rolesBtn: (extended: boolean) => string;
   rolesPicked: (extended: boolean) => string;
-  roleHelp: { hunter: string; witch: string };
+  roleHelp: { hunter: string; witch: string; cupid: string };
+  pickLink: string;
+  loversLinked: (partner: string) => string;
+  heartbreakDeath: (name: string, role: string | null) => string;
   pickPoison: string;
   witchVictim: (name: string) => string;
   healBtn: (name: string) => string;
@@ -189,13 +192,17 @@ export const T: Record<Lang, Dict> = {
     discussion: (s) => `☀️ Diskusi dimulai. ${s} detik sebelum voting.`,
     voteOpen: (s) => `🗳️ Voting dibuka (${s} detik). Siapa yang dicurigai? Kamu tidak bisa memilih dirimu sendiri.`,
     noSelfVote: "Kamu tidak bisa memilih dirimu sendiri.",
-    rolesLine: (x) => (x ? "🎭 Peran: <b>Extended</b> (Hunter mulai 6 pemain, Witch mulai 8)" : "🎭 Peran: Classic"),
+    rolesLine: (x) => (x ? "🎭 Peran: <b>Extended</b> (Hunter mulai 6 pemain, Cupid mulai 7, Witch mulai 8)" : "🎭 Peran: Classic"),
     rolesBtn: (x) => (x ? "🎭 Peran: Extended ✓" : "🎭 Peran: Classic"),
     rolesPicked: (x) => (x ? "Peran Extended: Hunter dan Witch ikut bermain." : "Peran Classic."),
     roleHelp: {
       hunter: "Bila kamu mati (diserang, diracun, atau diusir), kamu menembak satu pemain sebelum game berlanjut.",
+      cupid: "Di malam pertama kamu memilih satu pemain untuk jadi kekasihmu. Bila salah satu dari kalian mati, yang lain ikut mati karena patah hati. Kalian tetap di tim masing-masing.",
       witch: "Kamu punya dua ramuan, masing-masing sekali per game: obat (menyelamatkan korban werewolf) dan racun (membunuh satu pemain). Satu ramuan per malam. Selama obat masih ada, kamu diberi tahu siapa korban werewolf.",
     },
+    pickLink: "💘 Pilih satu pemain untuk jadi kekasihmu:",
+    loversLinked: (p) => `💘 Kamu dan <b>${p}</b> kini sepasang kekasih. Bila salah satu mati, yang lain ikut mati. Rahasiakan!`,
+    heartbreakDeath: (n, r) => `💔 ${n} tak sanggup hidup tanpa kekasihnya, dan ikut pergi${r ? `. Ternyata dia ${r}` : ""}.`,
     pickPoison: "🧪 Racun: pilih pemain yang ingin kamu racuni malam ini, atau tunggu kabar korban werewolf:",
     witchVictim: (n) => `🧪 Werewolf memilih <b>${n}</b> malam ini. Pakai obat untuk menyelamatkannya?`,
     healBtn: (n) => `💊 Selamatkan ${n}`,
@@ -296,13 +303,17 @@ export const T: Record<Lang, Dict> = {
     discussion: (s) => `☀️ Discussion starts. Voting in ${s}s.`,
     voteOpen: (s) => `🗳️ Voting is open (${s}s). Who do you suspect? You cannot vote for yourself.`,
     noSelfVote: "You cannot vote for yourself.",
-    rolesLine: (x) => (x ? "🎭 Roles: <b>Extended</b> (Hunter from 6 players, Witch from 8)" : "🎭 Roles: Classic"),
+    rolesLine: (x) => (x ? "🎭 Roles: <b>Extended</b> (Hunter from 6 players, Cupid from 7, Witch from 8)" : "🎭 Roles: Classic"),
     rolesBtn: (x) => (x ? "🎭 Roles: Extended ✓" : "🎭 Roles: Classic"),
     rolesPicked: (x) => (x ? "Extended roles: the Hunter and the Witch join." : "Classic roles."),
     roleHelp: {
       hunter: "When you die (attacked, poisoned or exiled), you shoot one player before the game goes on.",
+      cupid: "On the first night you choose one player to be your lover. If either of you dies, the other dies of a broken heart. You both stay on your own teams.",
       witch: "You have two potions, each once per game: a heal (saves the werewolves' victim) and a poison (kills one player). One potion per night. While you still have the heal, you are told who the werewolves chose.",
     },
+    pickLink: "💘 Choose one player to be your lover:",
+    loversLinked: (p) => `💘 You and <b>${p}</b> are now lovers. If either of you dies, the other follows. Keep it secret!`,
+    heartbreakDeath: (n, r) => `💔 ${n} cannot live without their lover, and follows them${r ? `. They were ${r}` : ""}.`,
     pickPoison: "🧪 Poison: choose a player to poison tonight, or wait to hear the werewolves' victim:",
     witchVictim: (n) => `🧪 The werewolves chose <b>${n}</b> tonight. Use your heal to save them?`,
     healBtn: (n) => `💊 Save ${n}`,

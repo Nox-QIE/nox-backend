@@ -43,7 +43,7 @@ flowchart LR
    - `commitRoles(root)` goes on chain.
    - Every player gets their role and its salt by DM. The salt is their own proof.
 3. **Night.** Players with a night role act by DM button. Each action goes on chain only as `commitNightAction(actionHash)`, with a fresh nonce from that player's wallet.
-3b. **Extended roles (optional).** With the extended role set the witch commits a heal or poison like any night action, and a dead hunter commits their shot (action 6) in the round they die; the day's `recordRound` waits for that shot.
+3b. **Extended roles (optional).** With the extended role set cupid commits a link (action 7) on night 1, the witch commits a heal or poison like any night action, and a dead hunter commits their shot (action 6) in the round they die; the day's `recordRound` waits for that shot.
 4. **Day.** The Game Master narrates the morning. The group discusses (a nudge comes when it goes quiet; when the vote opens the Game Master reads a witness report: who was named most, who spoke most, who stayed silent), then votes by button. Each vote is `castVote` from the voter's wallet. `recordRound(resultHash)` closes the round.
 5. **End.** `revealAndFinalize` publishes every role with its salt and proof, plus every night action with its nonce. The contract checks all of them against the commitments and records the winner.
    - Credits are minted by an on-chain formula (ADR-005).
