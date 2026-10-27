@@ -1,3 +1,4 @@
+import type { BadgeKey } from "../moments.js";
 import {
   BaseError,
   ContractFunctionRevertedError,
@@ -456,12 +457,15 @@ export class ViemLedger implements GameLedger {
     });
   }
 
-  awardBadge(gameId: Hex, badge: "SCAM_SPOTTER", userIds: number[]) {
+  awardBadge(gameId: Hex, badge: BadgeKey, userIds: number[]) {
     const badges = this.o.badgesAddress;
     if (!badges || !userIds.length) return;
     // Queued after finalize on the same game queue, so it runs once the outcome is known.
     this.enqueue(gameId, "awardBadge", async () => {
       if (!this.finalized.has(gameId)) return this.o.log?.({ event: "badge_skipped", gameId, badge, reason: "game not finalized" });
+      // A badge the admin has not defined yet would revert: skip it with a clear note instead.
+      const [, active] = (await this.publicClient.readContract({ address: badges, abi: NoxBadgesAbi as Abi, functionName: "badges", args: [keccak256(toHex(badge))] })) as [string, boolean];
+      if (!active) return this.o.log?.({ event: "badge_skipped", gameId, badge, reason: "not defined on NoxBadges (npm run badges -- --send)" });
       const accounts = userIds.map((u) => this.addressOf(u));
       const hash = await this.asOperator("award", [keccak256(toHex(badge)), gameId, accounts], { address: badges, abi: NoxBadgesAbi as Abi });
       this.o.log?.({ event: "badge_awarded", gameId, badge, players: accounts.length, hash });

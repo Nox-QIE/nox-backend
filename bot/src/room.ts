@@ -17,6 +17,7 @@ import type { Hex } from "viem";
 import { noLedger, type GameLedger, type LedgerNightReveal } from "./chain/ledger.js";
 import { FREE_MAX_PLAYERS } from "./chain/passes.js";
 import { gmRef, scenarioRef } from "./content.js";
+import { BADGES, rareMoments, type NightLogEntry } from "./moments.js";
 import { esc, roleName, T, type Lang } from "./i18n.js";
 import type { AgentRecord, Persona } from "./agents.js";
 import { safeName } from "./names.js";
@@ -87,6 +88,7 @@ export class GameRoom {
   /** Messages seen in each discussion and nudges sent: counts only, never the text (F07-D06). */
   private discussionLog: number[] = [];
   private nudgesSent = 0;
+  private nightLog: NightLogEntry[] = [];
   private phaseStep: "night" | "discussion" | "vote" | null = null;
   private queue: Promise<unknown> = Promise.resolve();
   private readonly t;
@@ -351,6 +353,11 @@ export class GameRoom {
 
   private commitNight(userId: number, round: number, targetUserId: number) {
     const kind = ACTION_OF[this.roleOf(userId)!];
+    // Kept for the rare moments at the end (10.07 #4); a changed choice replaces the earlier one.
+    if (kind) {
+      this.nightLog = this.nightLog.filter((n) => !(n.round === round && n.actor === String(userId)));
+      this.nightLog.push({ round, actor: String(userId), kind, target: String(targetUserId) });
+    }
     if (!this.gameId || !kind) return;
     const nonce = randomBytes32();
     const hash = actionHash(this.gameId, round, this.ledger.addressOf(userId)!, kind, this.ledger.addressOf(targetUserId)!, nonce);
@@ -494,6 +501,19 @@ export class GameRoom {
     let over = await this.narrator.gameOver(ended.winner, roster);
     if (this.gameId && this.deps.webUrl) over += `\n\n${this.t.verifyLink(`${this.deps.webUrl.replace(/\/+$/, "")}/game/?id=${this.gameId}`)}`;
     await this.deps.messenger.sendGroup(this.chatId, over);
+    // Rare moments (10.07 #4): announced in the group and awarded on NoxBadges once the game is final.
+    const s = this.state!;
+    const moments = rareMoments({
+      roles: ended.roles,
+      alive: Object.fromEntries(s.seats.map((id) => [id, s.players[id]!.alive])),
+      winner: ended.winner,
+      nights: this.nightLog,
+    });
+    if (moments.size) {
+      const lines = [...moments].flatMap(([key, ids]) => ids.map((id) => ({ who: this.name(id), badge: BADGES[key].name, why: BADGES[key].why[this.lang] })));
+      await this.deps.messenger.sendGroup(this.chatId, this.t.rareMoments(lines));
+      if (this.gameId) for (const [key, ids] of moments) this.ledger.awardBadge?.(this.gameId, key, ids.map(Number));
+    }
     if (this.sc) {
       await this.deps.messenger.sendGroup(this.chatId, this.sc.debrief);
       if (ended.winner === "village") {

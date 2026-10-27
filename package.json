@@ -23,7 +23,8 @@
     "sponsor:report": "node --import tsx bot/scripts/sponsor-report.ts",
     "store:rotate": "node --env-file=.env --import tsx bot/scripts/store-rotate.ts",
     "pass": "node --import tsx bot/scripts/pass.ts",
-    "sim:telegram": "node --env-file=.env --import tsx bot/scripts/sim-telegram.ts"
+    "sim:telegram": "node --env-file=.env --import tsx bot/scripts/sim-telegram.ts",
+    "badges": "node --env-file=.env --import tsx bot/scripts/badges.ts"
   },
   "devDependencies": {
     "typescript": "5.9",

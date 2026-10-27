@@ -81,6 +81,8 @@ type Dict = {
   discussion: (secs: number) => string;
   voteOpen: (secs: number) => string;
   noSelfVote: string;
+  /** Rare moments of the game (10.07 #4), each a badge on chain. */
+  rareMoments: (lines: { who: string; badge: string; why: string }[]) => string;
   voteOk: (target: string) => string;
   voted: (voter: string, target: string) => string;
   noPermission: string;
@@ -172,6 +174,7 @@ export const T: Record<Lang, Dict> = {
     discussion: (s) => `☀️ Diskusi dimulai. ${s} detik sebelum voting.`,
     voteOpen: (s) => `🗳️ Voting dibuka (${s} detik). Siapa yang dicurigai? Kamu tidak bisa memilih dirimu sendiri.`,
     noSelfVote: "Kamu tidak bisa memilih dirimu sendiri.",
+    rareMoments: (ls) => `🏅 <b>Momen langka</b>\n${ls.map((l) => `• ${l.who}: <b>${l.badge}</b> (${l.why})`).join("\n")}\nLencana ini dicatat di blockchain QIE.`,
     voteOk: (t) => `Vote tercatat: ${t}.`,
     voted: (v, t) => `${v} memilih ${t}.`,
     noPermission: "Kamu tidak bisa melakukan itu sekarang.",
@@ -261,6 +264,7 @@ export const T: Record<Lang, Dict> = {
     discussion: (s) => `☀️ Discussion starts. Voting in ${s}s.`,
     voteOpen: (s) => `🗳️ Voting is open (${s}s). Who do you suspect? You cannot vote for yourself.`,
     noSelfVote: "You cannot vote for yourself.",
+    rareMoments: (ls) => `🏅 <b>Rare moments</b>\n${ls.map((l) => `• ${l.who}: <b>${l.badge}</b> (${l.why})`).join("\n")}\nThese badges are recorded on the QIE blockchain.`,
     voteOk: (t) => `Vote recorded: ${t}.`,
     voted: (v, t) => `${v} voted for ${t}.`,
     noPermission: "You can't do that right now.",

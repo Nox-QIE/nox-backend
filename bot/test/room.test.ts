@@ -123,7 +123,7 @@ describe("full game", () => {
       expect((await room.vote(u, 1, String(u === wolf ? alive.find((x) => x !== wolf) : wolf))).ok).toBe(true);
     }
     expect(room.status).toBe("ended");
-    const last = messenger.group().at(-1)!;
+    const last = messenger.group().find((h) => h.includes("Winners:"))!; // the rare moments may follow it
     expect(last).toContain("Winners: <b>Village</b>");
     for (const u of USERS) expect(last).toContain(NAMES[u]!);
 
