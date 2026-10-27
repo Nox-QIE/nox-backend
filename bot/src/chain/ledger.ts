@@ -1,3 +1,4 @@
+import type { BadgeKey } from "../moments.js";
 import type { Address, Hex } from "viem";
 
 export interface LedgerRoleReveal {
@@ -32,7 +33,7 @@ export interface GameLedger {
   finalize(gameId: Hex, roles: LedgerRoleReveal[], nights: LedgerNightReveal[], resultHash: Hex, winner: number): void;
   cancel(gameId: Hex, reason: string): void;
   /** Award an achievement badge (NoxBadges) once the game is finalized; never affects the game. */
-  awardBadge?(gameId: Hex, badge: "SCAM_SPOTTER", userIds: number[]): void;
+  awardBadge?(gameId: Hex, badge: BadgeKey, userIds: number[]): void;
 }
 
 /** Chain disabled (NOX_CHAIN=off): the game runs exactly as before. */

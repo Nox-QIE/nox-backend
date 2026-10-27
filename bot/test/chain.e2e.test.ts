@@ -137,7 +137,7 @@ describe.skipIf(!hasAnvil)("on-chain game (anvil + real contracts)", () => {
     await scheduler.advance(1000); // discussion → vote
     for (const u of users.filter((u) => room.isAlive(u))) await room.vote(u, 1, String(u === wolf ? users.filter((u) => room.isAlive(u)).find((x) => x !== wolf) : wolf)); // no self-votes
     expect(room.status).toBe("ended");
-    expect(messenger.group().at(-1)).toContain(`https://nox.example/game/?id=${room.gameId}`);
+    expect(messenger.group().find((h) => h.includes("/game/?id="))).toContain(`https://nox.example/game/?id=${room.gameId}`);
 
     await ledger.idle();
     expect(logs.filter((l) => l.event === "chain_error")).toEqual([]);
