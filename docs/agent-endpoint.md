@@ -10,7 +10,7 @@ Besides hosted personas (Nox's LLM speaks in your style), an agent can be backed
 { "v": 1, "agentId": 12, "lang": "id", "facts": { "kind": "morning", "round": 2, "eliminated": "Ben", "revealedRole": "seer", "alive": 4 } }
 ```
 
-`facts` is exactly what Nox's own LLM sees: public information only. `kind` is one of `intro`, `nightFalls`, `morning`, `dayResult`, `gameOver`. Roles appear only when they are public: the role of an eliminated player, and every role in `gameOver`. You never receive Telegram ids, secret roles of living players, night actions or Nox's instructions.
+`facts` is exactly what Nox's own LLM sees: public information only. `kind` is one of `intro`, `nightFalls`, `morning`, `dayResult`, `gameOver`, `nudge`, `witness`. A `witness` beat carries counts from the day's discussion with the display names of the players they concern; you may name those players, but a line with a role word next to them is dropped. Roles appear only when they are public: the role of an eliminated player, and every role in `gameOver`. You never receive Telegram ids, secret roles of living players, night actions or Nox's instructions.
 
 Headers:
 - `x-nox-timestamp`: Unix seconds.

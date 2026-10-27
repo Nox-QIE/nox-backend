@@ -1,5 +1,6 @@
 import type { PublicView, Role, Team } from "@nox/shared/engine";
 import { esc, unesc, type Lang } from "../i18n.js";
+import type { Witness } from "../discussion.js";
 import { TemplateNarrator, type Narrator, type NarratorReport, type Wording } from "../narrator.js";
 import { checkNarration } from "./guard.js";
 import { costUsd, type GmModel, type GmUsage } from "./model.js";
@@ -57,6 +58,9 @@ const addUsage = (to: GmUsage, u: GmUsage) => {
  *
  * Inputs from the room are HTML-escaped; the model sees raw names and its output is escaped again.
  */
+/** Role words in either language, for the witness report (which may name living players). */
+const ROLE_WORD = /\b(were-?wol(f|ves)|wol(f|ves)|serigala|seer|peramal|dokter|doctor|penipu|scammer)\b/i;
+
 export class LlmNarrator implements Narrator {
   private readonly template: TemplateNarrator;
   private readonly system: string;
@@ -165,6 +169,16 @@ export class LlmNarrator implements Narrator {
     // Every living player is off limits: the line must not point at anyone.
     const flavor = await this.flavor({ kind: "nudge", round: view.round, alive: view.alive.length }, []);
     return flavor ? `🎙 <i>${flavor}</i>` : this.template.nudge(view);
+  }
+
+  async witness(view: PublicView, w: Witness) {
+    const fact = await this.template.witness(view, w);
+    const raw = { mentioned: w.mentioned.map((m) => ({ name: unesc(m.name), count: m.count })), talkative: w.talkative && unesc(w.talkative), quiet: w.quiet.map(unesc) };
+    // Only the players in the report may be named. The model knows no roles, but a line that names
+    // living players next to a role word still reads as a hint, so it is dropped for the plain report.
+    const allowed = [...raw.mentioned.map((m) => m.name), ...(raw.talkative ? [raw.talkative] : []), ...raw.quiet];
+    const flavor = await this.flavor({ kind: "witness", round: view.round, alive: view.alive.length, ...raw }, allowed);
+    return this.join(flavor && !ROLE_WORD.test(flavor) ? flavor : null, fact);
   }
 
   finish(): NarratorReport {

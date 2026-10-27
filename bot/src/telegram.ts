@@ -353,8 +353,9 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
     ...(webUrl ? { webUrl } : {}),
     onAgentGame: onAgentGame({ store, messenger, ...(operatorChatId ? { operatorChatId } : {}) }),
     onGameReport: (g) => store.recordGmGame(g),
-    // Counting a quiet discussion needs Telegram privacy mode off (BotFather → Group Privacy → Disable).
-    ...(nudge !== "off" ? { nudge, canCountMessages: bot.botInfo.can_read_all_group_messages } : {}),
+    // Reading the discussion (quiet nudge, witness report) needs Telegram privacy mode off (BotFather → Group Privacy → Disable).
+    canCountMessages: bot.botInfo.can_read_all_group_messages,
+    ...(nudge !== "off" ? { nudge } : {}),
     ...(hostPassCheck ? { hostPass: hostPassCheck } : {}),
   });
   await recoverGames(store, ledger, messenger, logLine);
@@ -521,8 +522,8 @@ export async function createNoxBot({ botToken, dbPath, webUrl, operatorChatId, a
 
   bot.on("message:text", async (ctx) => {
     if (ctx.chat.type !== "private") {
-      // Only counted, never stored or read further: is the discussion going quiet? (F07-S02)
-      registry.roomOfChat(ctx.chat.id)?.noteGroupMessage();
+      // Counted, never stored: is the discussion going quiet (F07-S02), and who spoke and who was named (witness report)?
+      registry.roomOfChat(ctx.chat.id)?.noteGroupMessage(ctx.from.id, ctx.message.text);
       return;
     }
     registry.markStarted(ctx.from.id);

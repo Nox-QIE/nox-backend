@@ -36,7 +36,7 @@ Button callback data, at most 64 bytes as Telegram requires. `<room>` is the lob
 | `g:<booking>` | anyone in the booked group, at the booked time | open a paid Game Night lobby as its host (first 32 hex digits of the booking id) |
 
 Text messages:
-- **Group**: counted only, to see whether discussion has gone quiet (discussion nudge). The text is never stored or read further. At game end the bot keeps the number of messages in each discussion and the nudges sent (`finished_games.discussion`, `.nudges`), and nothing else.
+- **Group**: read once in memory during the discussion and dropped: the bot counts messages per living player and how often each living player's display name appears in other players' messages (discussion nudge, witness report when the vote opens). The text is never stored and never sent to the AI; the witness beat carries only names and counts. At game end the bot keeps the number of messages in each discussion and the nudges sent (`finished_games.discussion`, `.nudges`), and nothing else.
 - **Private, from a living werewolf at night**: forwarded to the other living werewolves (wolf chat). Never stored.
 
 **Out.** Messages are sent with `parse_mode: HTML`, with inline keyboards built from the callback formats above. Every name and every piece of user text is HTML-escaped.
@@ -63,8 +63,9 @@ Beat kinds:
 | `dayResult` | `round`, `eliminated`, `revealedRole`, `alive` |
 | `gameOver` | `winner`, `roster` (display name and role of everyone) |
 | `nudge` | `round`, `alive` |
+| `witness` | `round`, `alive`, `mentioned` (display name and count, top three), `talkative` (display name or null), `quiet` (display names) |
 
-Only public facts are sent. The LLM never receives Telegram ids, the secret roles of living players, night actions, wolf chat or wallet addresses.
+Only public facts are sent (the witness counts are public too: they describe messages the whole group saw). The LLM never receives Telegram ids, the secret roles of living players, night actions, wolf chat or wallet addresses.
 
 **In.** One narration text. It must pass the guard (`bot/src/gm/guard.ts`):
 - names no living player and hints at no role;
